@@ -140,6 +140,10 @@ code { font-size: .9em; background: var(--line); padding: 1px 5px; border-radius
 .sub { color: var(--muted); font-size: 12px; }
 #viewerWrap { flex: 1; position: relative; min-height: 0; }
 #viewer { position: absolute; inset: 0 44px; }
+/* 1 trang trên màn hình rộng: giữ khung chữ ~820px ở giữa để dòng không quá dài */
+@media (min-width: 601px) {
+  body.single-page #reader:not(.is-pdf) #viewer { left: max(44px, calc(50% - 410px)); right: max(44px, calc(50% - 410px)); }
+}
 @media (max-width: 600px) { #viewer { inset: 0 14px; } .pager { display: none; } }
 .pager {
   position: absolute; top: 50%; transform: translateY(-50%); width: 40px; height: 80px;

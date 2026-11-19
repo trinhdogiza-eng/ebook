@@ -104,3 +104,7 @@ tools/              máy chủ chạy thử, sách mẫu, trang kiểm thử
 - Tắt app lúc đang đọc → lần sau mở app vào thẳng cuốn đó, đúng trang đã đọc.
 - Bấm **‹** về thư viện trước khi tắt → lần sau mở vào thư viện.
 - Muốn luôn vào thư viện: **Aa → Khi mở app → Vào thư viện**.
+
+## 1 trang hay 2 trang trên màn hình rộng (từ v2.7)
+- Mặc định **1 trang**: trên máy tính/iPad ngang, khung chữ rộng khoảng 820px đặt giữa màn hình.
+- Muốn 2 trang cạnh nhau như sách mở: **Aa → Số trang → 2 trang (màn hình rộng)** (chỉ khi màn hình rộng từ 900px và ở kiểu đọc Lật trang).

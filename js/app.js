@@ -9,7 +9,7 @@ import {
 } from './read-aloud.js';
 
 /* global ePub */
-const APP_VERSION = '2.6';
+const APP_VERSION = '2.7';
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -33,7 +33,7 @@ if (!deviceId) { deviceId = Math.random().toString(36).slice(2) + Date.now().toS
 let deviceName = lsGet('deviceName', guessDeviceName());
 
 const settings = Object.assign(
-  { fontSize: 100, lineHeight: 1.5, fontFamily: '', theme: 'light', flow: 'paginated', pageAnim: 'slide', ttsRate: 1.5, ttsVoice: '', ttsEngine: 'auto', gVoice: '', bgVoice: 'vi_VN-vais1000-medium', openVoice: 'device', startView: 'resume' },
+  { fontSize: 100, lineHeight: 1.5, fontFamily: '', theme: 'light', flow: 'paginated', pageAnim: 'slide', ttsRate: 1.5, ttsVoice: '', ttsEngine: 'auto', gVoice: '', bgVoice: 'vi_VN-vais1000-medium', openVoice: 'device', startView: 'resume', spread: 'single' },
   lsGet('settings', {}),
 );
 const saveSettings = () => lsSet('settings', settings);
@@ -450,7 +450,8 @@ async function createRendition(cfi) {
     // Nạp sẵn chương kế/chương trước khi còn cách khoảng 4 màn hình (mặc định epub.js chỉ ~500px → lật
     // nhanh thì tới trang cuối chương mà chương kế chưa kịp nạp).
     offset: Math.min(2400, Math.max(1400, window.innerWidth * 3)),
-    spread: 'auto', minSpreadWidth: 900,
+    // 2 trang cạnh nhau chỉ khi chọn "2 trang" và màn hình đủ rộng; mặc định 1 trang
+    spread: settings.spread === 'double' ? 'auto' : 'none', minSpreadWidth: 900,
     // Safari (iPhone/iPad/Mac) không chuyển sự kiện chạm/vuốt vào iframe bị sandbox thiếu "allow-scripts",
     // nên phải bật. Script trong sách vẫn bị chặn: xem sanitizeSection() (xoá <script> + CSP script-src 'none').
     allowScriptedContent: true,
@@ -556,6 +557,10 @@ function applyChrome() {
   $('pageAnim').value = settings.pageAnim;
   $('pageAnimRow').hidden = settings.flow !== 'paginated';
   $('startView').value = settings.startView;
+  $('spreadMode').value = settings.spread;
+  $('spreadRow').hidden = settings.flow !== 'paginated';
+  // 1 trang: khung chữ vừa phải, đặt giữa màn hình (không trải dài hết màn hình rộng)
+  document.body.classList.toggle('single-page', settings.spread !== 'double');
   document.querySelectorAll('.sw').forEach((b) => b.classList.toggle('active', b.dataset.theme === settings.theme));
 }
 
@@ -1404,6 +1409,7 @@ $('fontFamily').onchange = (e) => changeSetting({ fontFamily: e.target.value });
 $('flowMode').onchange = (e) => changeSetting({ flow: e.target.value });
 $('pageAnim').onchange = (e) => { settings.pageAnim = e.target.value; saveSettings(); }; // không cần dựng lại trang
 $('startView').onchange = (e) => { settings.startView = e.target.value; saveSettings(); };
+$('spreadMode').onchange = (e) => changeSetting({ spread: e.target.value });
 document.querySelectorAll('.sw').forEach((b) => { b.onclick = () => changeSetting({ theme: b.dataset.theme }); });
 
 // Lưu ngay khi rời app / chuyển tab / khoá màn hình
