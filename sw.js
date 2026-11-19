@@ -1,0 +1,46 @@
+// Service worker: lưu sẵn giao diện và thư viện để app mở được khi không có mạng.
+const CACHE = 'epub-reader-v3';
+const SHELL = [
+  './', 'index.html', 'css/style.css', 'js/app.js', 'js/db.js', 'js/sync.js', 'js/cloud-config.js',
+  'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-180.png', 'icons/icon-192.png',
+  'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js',
+  'https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js',
+];
+const CDN_HOSTS = ['cdn.jsdelivr.net'];
+
+self.addEventListener('install', (e) => {
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+});
+
+self.addEventListener('activate', (e) => {
+  e.waitUntil(
+    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim()),
+  );
+});
+
+self.addEventListener('fetch', (e) => {
+  const req = e.request;
+  if (req.method !== 'GET') return;
+  const url = new URL(req.url);
+  const sameOrigin = url.origin === self.location.origin;
+
+  if (sameOrigin) {
+    // Mạng trước (để nhận bản cập nhật), rơi về bộ nhớ đệm khi ngoại tuyến
+    e.respondWith(
+      fetch(req).then((res) => {
+        if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
+        return res;
+      }).catch(() => caches.match(req, { ignoreSearch: true }).then((r) => r || caches.match('index.html'))),
+    );
+  } else if (CDN_HOSTS.includes(url.hostname)) {
+    // Thư viện có phiên bản cố định: dùng bộ nhớ đệm trước
+    e.respondWith(
+      caches.match(req).then((hit) => hit || fetch(req).then((res) => {
+        if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
+        return res;
+      })),
+    );
+  }
+  // OneDrive / Google Drive / đăng nhập: để trình duyệt tự xử lý
+});
