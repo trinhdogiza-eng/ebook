@@ -354,7 +354,7 @@ function injectStyle(contents) {
   if (!style) { style = doc.createElement('style'); style.id = '__reader_style'; doc.head.appendChild(style); }
   const recolor = settings.theme !== 'light';
   style.textContent = `
-    html { font-size: ${settings.fontSize}% !important; background: ${t.bg} !important; }
+    html { font-size: ${settings.fontSize}% !important; background: ${t.bg} !important; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
     body { background: ${t.bg} !important; color: ${t.fg} !important; -webkit-text-size-adjust: none; }
     p, li, blockquote, dd, dt, td, div { line-height: ${settings.lineHeight} !important; }
     ${recolor ? `body *:not(img):not(svg):not(image) { color: inherit !important; background-color: transparent !important; border-color: ${t.fg}33 !important; }` : ''}
@@ -536,34 +536,44 @@ document.addEventListener('keydown', (e) => {
 });
 
 // Chạm trái/phải để lật trang, chạm giữa để ẩn/hiện thanh công cụ, vuốt ngang để lật
+// iPhone/iPad (Safari) không phát sự kiện "click" khi chạm vào chữ thường trong iframe,
+// nên chạm và vuốt được nhận trực tiếp từ touchstart/touchend. Chuột (máy tính) vẫn dùng click.
 let touch = null;
-let swiped = false;
+let lastTouchEnd = 0;
 function onTouchStart(e) {
   const t = e.changedTouches?.[0];
-  if (t) touch = { x: t.screenX, y: t.screenY, time: Date.now() };
-  swiped = false;
+  touch = t ? { x: t.screenX, y: t.screenY, time: Date.now(), multi: e.touches?.length > 1 } : null;
 }
 function onTouchEnd(e) {
+  lastTouchEnd = Date.now();
   const t = e.changedTouches?.[0];
-  if (!t || !touch || settings.flow !== 'paginated') return;
-  const dx = t.screenX - touch.x, dy = t.screenY - touch.y;
-  if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5 && Date.now() - touch.time < 800) {
-    swiped = true;
+  const start = touch;
+  touch = null;
+  if (!t || !start || start.multi) return;
+  const dx = t.screenX - start.x, dy = t.screenY - start.y;
+  const dt = Date.now() - start.time;
+  if (settings.flow === 'paginated' && Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) && dt < 1000) {
     dx < 0 ? next() : prev();
+    return;
   }
+  if (Math.abs(dx) < 12 && Math.abs(dy) < 12 && dt < 500) handleTap(e.view, t.clientX, e.target);
 }
 function onFrameClick(e) {
-  if (swiped) { swiped = false; return; }
-  if (e.target?.closest?.('a')) return;
-  const sel = e.view?.getSelection?.();
+  if (Date.now() - lastTouchEnd < 800) return; // đã xử lý bằng cảm ứng
+  handleTap(e.view, e.clientX, e.target);
+}
+function handleTap(evView, clientX, target) {
+  const view = evView || target?.ownerDocument?.defaultView;
+  if (target?.closest?.('a')) return;
+  const sel = view?.getSelection?.();
   if (sel && sel.toString().length) return;
   if (!$('tocPanel').hidden || !$('settingsPanel').hidden) { $('tocPanel').hidden = true; $('settingsPanel').hidden = true; return; }
-  const frame = e.view?.frameElement;
+  const frame = view?.frameElement;
   const wrap = $('viewerWrap').getBoundingClientRect();
-  const x = (frame ? frame.getBoundingClientRect().left : 0) + e.clientX;
+  const x = (frame ? frame.getBoundingClientRect().left : 0) + clientX;
   const f = (x - wrap.left) / wrap.width;
-  if (settings.flow === 'paginated' && f < 0.28) prev();
-  else if (settings.flow === 'paginated' && f > 0.72) next();
+  if (settings.flow === 'paginated' && f < 0.3) prev();
+  else if (settings.flow === 'paginated' && f > 0.7) next();
   else $('reader').classList.toggle('immersive');
 }
 
