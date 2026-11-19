@@ -2,7 +2,7 @@ import * as db from './db.js';
 import * as sync from './sync.js';
 
 /* global ePub */
-const APP_VERSION = '1.3';
+const APP_VERSION = '1.4';
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Phiên bản ${APP_VERSION}`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -26,7 +26,7 @@ if (!deviceId) { deviceId = Math.random().toString(36).slice(2) + Date.now().toS
 let deviceName = lsGet('deviceName', guessDeviceName());
 
 const settings = Object.assign(
-  { fontSize: 100, lineHeight: 1.5, fontFamily: '', theme: 'light', flow: 'paginated' },
+  { fontSize: 100, lineHeight: 1.5, fontFamily: '', theme: 'light', flow: 'paginated', pageAnim: 'slide' },
   lsGet('settings', {}),
 );
 const saveSettings = () => lsSet('settings', settings);
@@ -384,7 +384,7 @@ function injectStyle(contents) {
   const bodyFs = Math.round(baseFs * settings.fontSize) / 100;
   const recolor = settings.theme !== 'light';
   style.textContent = `
-    html { font-size: ${settings.fontSize}% !important; background: ${t.bg} !important; touch-action: pan-x pan-y; -webkit-tap-highlight-color: transparent; }
+    html { font-size: ${settings.fontSize}% !important; background: ${t.bg} !important; touch-action: ${settings.flow === 'paginated' ? 'none' : 'pan-y'}; -webkit-tap-highlight-color: transparent; }
     body { font-size: ${bodyFs}px !important; background: ${t.bg} !important; color: ${t.fg} !important; -webkit-text-size-adjust: none; }
     p, li, blockquote, dd, dt, td, div { line-height: ${settings.lineHeight} !important; }
     ${recolor ? `body *:not(img):not(svg):not(image) { color: inherit !important; background-color: transparent !important; border-color: ${t.fg}33 !important; }` : ''}
@@ -404,6 +404,8 @@ function applyChrome() {
   $('lhVal').textContent = settings.lineHeight.toFixed(1);
   $('fontFamily').value = settings.fontFamily;
   $('flowMode').value = settings.flow;
+  $('pageAnim').value = settings.pageAnim;
+  $('pageAnimRow').hidden = settings.flow !== 'paginated';
   document.querySelectorAll('.sw').forEach((b) => b.classList.toggle('active', b.dataset.theme === settings.theme));
 }
 
@@ -548,27 +550,129 @@ async function closeBook() {
   renderLibrary();
 }
 
-/* ----- Điều hướng ----- */
-const next = () => R.rendition?.next();
-const prev = () => R.rendition?.prev();
+/* ----- Điều hướng + hiệu ứng lật trang kiểu Play Sách ----- */
+// Ở chế độ lật trang, epub.js xếp cả chương thành các cột trong 1 khung rộng và lật trang bằng
+// cách đổi scrollLeft của khung chứa. Ta cuộn mượt tới trang kế (trượt), cho trang chạy theo ngón tay
+// khi kéo, và khi sang chương mới thì cho chương mới trượt vào.
+const reduceMotion = () => settings.pageAnim === 'none'
+  || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+function pager() {
+  const m = R.rendition?.manager;
+  const c = m?.container;
+  if (!c || !m.layout || settings.flow !== 'paginated') return null;
+  return { c, delta: m.layout.delta };
+}
+
+let anim = null;
+function animateScroll(c, from, to, ms) {
+  anim?.finish();
+  return new Promise((resolve) => {
+    const t0 = performance.now();
+    let done = false;
+    const finish = () => { if (done) return; done = true; c.scrollLeft = to; anim = null; resolve(); };
+    anim = { finish };
+    const step = (now) => {
+      if (done) return;
+      const p = Math.min(1, (now - t0) / ms);
+      c.scrollLeft = from + (to - from) * (1 - (1 - p) ** 3); // ease-out
+      if (p < 1) requestAnimationFrame(step); else finish();
+    };
+    requestAnimationFrame(step);
+    setTimeout(finish, ms + 150); // phòng khi trình duyệt tạm dừng hoạt ảnh
+  });
+}
+
+function slideIn(dir) {
+  if (reduceMotion() || !$('viewer').animate) return;
+  $('viewer').animate(
+    [{ transform: `translateX(${dir * 30}%)`, opacity: 0 }, { transform: 'none', opacity: 1 }],
+    { duration: 300, easing: 'cubic-bezier(.2,.7,.2,1)' },
+  );
+}
+
+// dir = 1: trang sau, -1: trang trước. fromScroll: vị trí trang trước khi bắt đầu kéo.
+async function turn(dir, fromScroll) {
+  if (!R.rendition) return;
+  anim?.finish();
+  const go = () => (dir > 0 ? R.rendition.next() : R.rendition.prev());
+  const p = pager();
+  if (!p || reduceMotion()) return go();
+  const { c, delta } = p;
+  const start = fromScroll ?? c.scrollLeft;
+  const within = dir > 0 ? start + c.offsetWidth + delta <= c.scrollWidth + 1 : start > 1;
+  if (within) {
+    await animateScroll(c, c.scrollLeft, start + dir * delta, 280);
+    c.scrollLeft = start; // trả về rồi để epub.js tự lật đúng 1 trang và báo vị trí (cùng khung hình, không nháy)
+    await go();
+  } else {
+    if (Math.abs(c.scrollLeft - start) > 1) await animateScroll(c, c.scrollLeft, start, 160);
+    await go();
+    slideIn(dir);
+  }
+}
+const next = () => turn(1);
+const prev = () => turn(-1);
+
+// Kéo trang theo ngón tay (dùng chung cho khung sách và 2 vùng chạm mép)
+let drag = null;
+function dragStart(x, y) {
+  anim?.finish();
+  const p = pager();
+  drag = { x, y, time: Date.now(), scroll: p ? p.c.scrollLeft : 0, active: false, lastX: x, lastT: Date.now(), v: 0 };
+}
+function dragMove(x, y) {
+  const s = drag;
+  if (!s) return;
+  const p = pager();
+  if (!p || reduceMotion()) return;
+  const dx = x - s.x, dy = y - s.y;
+  if (!s.active) {
+    if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.2) s.active = true;
+    else return;
+  }
+  const max = p.c.scrollWidth - p.c.offsetWidth;
+  p.c.scrollLeft = Math.max(0, Math.min(max, s.scroll - dx));
+  const now = Date.now();
+  s.v = (x - s.lastX) / Math.max(1, now - s.lastT);
+  s.lastX = x; s.lastT = now;
+}
+// Trả về 'tap' nếu là một cú chạm, 'done' nếu đã xử lý (lật/kéo), '' nếu bỏ qua.
+function dragEnd(x, y) {
+  const s = drag;
+  drag = null;
+  if (!s) return '';
+  const dx = x - s.x, dy = y - s.y, dt = Date.now() - s.time;
+  const p = pager();
+  if (s.active && p) {
+    const fling = Math.abs(s.v) > 0.35;
+    if (fling || Math.abs(dx) > p.c.offsetWidth * 0.18) turn((fling ? s.v : dx) < 0 ? 1 : -1, s.scroll);
+    else animateScroll(p.c, p.c.scrollLeft, s.scroll, 180); // chưa đủ xa → trượt về chỗ cũ
+    return 'done';
+  }
+  if (settings.flow === 'paginated' && Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) && dt < 1000) {
+    turn(dx < 0 ? 1 : -1, s.scroll);
+    return 'done';
+  }
+  return Math.abs(dx) < 12 && Math.abs(dy) < 12 && dt < 500 ? 'tap' : '';
+}
 
 // Vùng chạm 2 mép nằm trên trang app (ngoài khung sách) → luôn nhận chạm/vuốt trên iPhone/iPad,
 // kể cả khi Safari không chuyển sự kiện vào trong khung sách.
 function bindTapZone(el, action) {
-  let s = null;
   el.addEventListener('touchstart', (e) => {
     const t = e.changedTouches[0];
-    s = { x: t.clientX, y: t.clientY, time: Date.now() };
+    dragStart(t.screenX, t.screenY);
+  }, { passive: true });
+  el.addEventListener('touchmove', (e) => {
+    const t = e.touches[0];
+    if (t) dragMove(t.screenX, t.screenY);
   }, { passive: true });
   el.addEventListener('touchend', (e) => {
     const t = e.changedTouches[0];
-    const start = s; s = null;
-    if (!start) return;
     e.preventDefault(); // không phát thêm "click"
-    const dx = t.clientX - start.x, dy = t.clientY - start.y;
-    if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) (dx < 0 ? next : prev)();
-    else if (Math.abs(dx) < 15 && Math.abs(dy) < 15) action();
+    if (dragEnd(t.screenX, t.screenY) === 'tap') action();
   }, { passive: false });
+  el.addEventListener('touchcancel', () => { const s = drag; drag = null; const p = pager(); if (s?.active && p) animateScroll(p.c, p.c.scrollLeft, s.scroll, 180); });
   el.addEventListener('click', action); // chuột / bút cảm ứng
 }
 bindTapZone($('tapPrev'), prev);
@@ -591,7 +695,6 @@ document.addEventListener('keydown', (e) => {
 // Chạm trái/phải để lật trang, chạm giữa để ẩn/hiện thanh công cụ, vuốt ngang để lật
 // iPhone/iPad (Safari) không phát sự kiện "click" khi chạm vào chữ thường trong iframe,
 // nên chạm và vuốt được nhận trực tiếp từ touchstart/touchend. Chuột (máy tính) vẫn dùng click.
-let touch = null;
 let lastTouchEnd = 0;
 let pinch = null; // chụm/mở 2 ngón để đổi cỡ chữ
 const touchDist = (ts) => Math.hypot(ts[0].screenX - ts[1].screenX, ts[0].screenY - ts[1].screenY);
@@ -599,14 +702,17 @@ function onTouchStart(e) {
   if (e.touches?.length === 2) {
     const d = touchDist(e.touches);
     pinch = { d0: d, d };
-    touch = null;
+    if (drag?.active) { const p = pager(); if (p) p.c.scrollLeft = drag.scroll; }
+    drag = null;
     return;
   }
   const t = e.changedTouches?.[0];
-  touch = t && !pinch ? { x: t.screenX, y: t.screenY, time: Date.now() } : null;
+  if (t && !pinch) dragStart(t.screenX, t.screenY);
 }
 function onTouchMove(e) {
-  if (pinch && e.touches?.length === 2) pinch.d = touchDist(e.touches);
+  if (pinch) { if (e.touches?.length === 2) pinch.d = touchDist(e.touches); return; }
+  const t = e.touches?.[0];
+  if (t) dragMove(t.screenX, t.screenY);
 }
 function onTouchEnd(e) {
   lastTouchEnd = Date.now();
@@ -614,7 +720,7 @@ function onTouchEnd(e) {
     if (e.touches?.length) return; // còn ngón trên màn hình
     const ratio = pinch.d / pinch.d0;
     pinch = null;
-    touch = null;
+    drag = null;
     if (ratio > 1.12 || ratio < 0.89) {
       const target = Math.round((settings.fontSize * Math.sqrt(ratio)) / 10) * 10; // dịu hơn tỉ lệ ngón tay
       const step = ratio > 1 ? Math.max(target, settings.fontSize + 10) : Math.min(target, settings.fontSize - 10);
@@ -624,16 +730,8 @@ function onTouchEnd(e) {
     return;
   }
   const t = e.changedTouches?.[0];
-  const start = touch;
-  touch = null;
-  if (!t || !start) return;
-  const dx = t.screenX - start.x, dy = t.screenY - start.y;
-  const dt = Date.now() - start.time;
-  if (settings.flow === 'paginated' && Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) && dt < 1000) {
-    dx < 0 ? next() : prev();
-    return;
-  }
-  if (Math.abs(dx) < 12 && Math.abs(dy) < 12 && dt < 500) handleTap(e.view, t.clientX, e.target);
+  if (!t) { drag = null; return; }
+  if (dragEnd(t.screenX, t.screenY) === 'tap') handleTap(e.view, t.clientX, e.target);
 }
 function onFrameClick(e) {
   if (Date.now() - lastTouchEnd < 800) return; // đã xử lý bằng cảm ứng
@@ -673,6 +771,7 @@ $('lhUp').onclick = () => changeSetting({ lineHeight: Math.min(2.4, +(settings.l
 $('lhDown').onclick = () => changeSetting({ lineHeight: Math.max(1.0, +(settings.lineHeight - 0.1).toFixed(1)) });
 $('fontFamily').onchange = (e) => changeSetting({ fontFamily: e.target.value });
 $('flowMode').onchange = (e) => changeSetting({ flow: e.target.value });
+$('pageAnim').onchange = (e) => { settings.pageAnim = e.target.value; saveSettings(); }; // không cần dựng lại trang
 document.querySelectorAll('.sw').forEach((b) => { b.onclick = () => changeSetting({ theme: b.dataset.theme }); });
 
 // Lưu ngay khi rời app / chuyển tab / khoá màn hình
