@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Thử phát âm thanh khi khoá màn hình</title>
+<style>
+  :root { --bg: #f7f4ee; --fg: #1f1d1a; --muted: #6d675e; --accent: #b5532c; --line: #e3ddd2; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #161514; --fg: #e6e1d8; --muted: #9c958a; --line: #34312d; --accent: #e08a5e; } }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font: 16px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 8px; }
+  p { margin: 8px 0; }
+  .card { border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin: 14px 0; }
+  button { font: inherit; padding: 12px 16px; border-radius: 999px; border: 0; background: var(--accent); color: #fff; font-weight: 600; width: 100%; margin-top: 8px; }
+  button.secondary { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+  .result { font-weight: 700; font-size: 18px; margin-top: 10px; }
+  .ok { color: #3a9d5d; } .bad { color: #c0392b; }
+  small { color: var(--muted); }
+  ol { padding-left: 20px; margin: 6px 0; }
+</style>
+</head>
+<body>
+<h1>Thử phát âm thanh khi khoá màn hình</h1>
+<p><small>Trang thử của app Đọc EPUB. Mỗi phép thử phát tiếng "bíp" liên tục (mỗi giây một tiếng) và ghi lại xem khi khoá màn hình có phát tiếp được không.</small></p>
+<ol>
+  <li>Bật âm lượng vừa nghe.</li>
+  <li>Bấm <b>một</b> nút thử bên dưới, nghe vài tiếng bíp.</li>
+  <li><b>Khoá màn hình khoảng 20 giây</b> (nghe xem còn tiếng bíp không).</li>
+  <li>Mở lại máy, xem kết quả hiện ngay dưới nút.</li>
+</ol>
+
+<div class="card">
+  <b>Thử 1 — Bắt đầu phát lúc đang khoá</b><br>
+  <small>Giống cách app cũ: khi khoá màn hình mới chuyển sang phát âm thanh.</small>
+  <button id="t1">Bắt đầu thử 1</button>
+  <div class="result" id="r1"></div>
+</div>
+
+<div class="card">
+  <b>Thử 2 — Đổi tệp âm thanh liên tục</b><br>
+  <small>Phát từ trước khi khoá, mỗi tiếng bíp là một tệp riêng (giống đọc từng câu).</small>
+  <button id="t2">Bắt đầu thử 2</button>
+  <div class="result" id="r2"></div>
+</div>
+
+<div class="card">
+  <b>Thử 3 — Một luồng âm thanh liền mạch</b><br>
+  <small>Phát từ trước khi khoá, tất cả tiếng bíp đi qua một luồng không bao giờ ngắt.</small>
+  <button id="t3">Bắt đầu thử 3</button>
+  <div class="result" id="r3"></div>
+</div>
+
+<button class="secondary" id="stop">Dừng tất cả</button>
+
+<script>
+// Tạo 1 tiếng bíp ngắn (tệp WAV) — mỗi lần một cao độ để nghe rõ là đang chạy
+function beepWav(freq, ms = 350, total = 1000) {
+  const rate = 22050, n = Math.round(rate * total / 1000), on = Math.round(rate * ms / 1000);
+  const buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+  const s = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+  s(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); s(8, 'WAVE'); s(12, 'fmt '); v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true); s(36, 'data'); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) {
+    const a = i < on ? Math.sin(Math.PI * i / on) * 0.35 : 0;
+    v.setInt16(44 + i * 2, Math.round(a * 32767 * Math.sin(2 * Math.PI * freq * i / rate)), true);
+  }
+  return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+}
+const FREQS = [523, 587, 659, 698];
+const urls = FREQS.map((f) => beepWav(f));
+
+// Ghi nhận: mỗi tiếng bíp phát lúc màn hình đang mở hay đang khoá
+const stats = { 1: null, 2: null, 3: null };
+function newStats(id) { stats[id] = { hidden: 0, visible: 0, wentHidden: false }; show(id); }
+function tick(id) {
+  const st = stats[id]; if (!st) return;
+  if (document.hidden) { st.hidden++; st.wentHidden = true; } else st.visible++;
+}
+function show(id) {
+  const st = stats[id], el = document.getElementById('r' + id);
+  if (!st) { el.textContent = ''; return; }
+  if (!st.wentHidden) { el.className = 'result'; el.textContent = `Đang phát… (${st.visible} tiếng bíp) — giờ hãy khoá màn hình`; return; }
+  const ok = st.hidden >= 5;
+  el.className = 'result ' + (ok ? 'ok' : 'bad');
+  el.textContent = ok
+    ? `✅ ĐƯỢC: phát ${st.hidden} tiếng bíp trong lúc khoá màn hình`
+    : `❌ KHÔNG ĐƯỢC: chỉ phát ${st.hidden} tiếng bíp trong lúc khoá màn hình`;
+}
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) { [1, 2, 3].forEach(show); }
+  else if (pending1) { pending1 = false; start1Hidden(); }
+});
+
+let el = null, ctx = null, timer = null, pending1 = false;
+function stopAll() {
+  if (el) { el.pause(); el.onended = null; el.srcObject = null; el.removeAttribute('src'); }
+  if (ctx) { ctx.close(); ctx = null; }
+  clearInterval(timer); timer = null; pending1 = false;
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
+}
+function mediaSession(title) {
+  if (!('mediaSession' in navigator)) return;
+  navigator.mediaSession.metadata = new MediaMetadata({ title, artist: 'Đọc EPUB — thử phát nền' });
+  navigator.mediaSession.playbackState = 'playing';
+}
+
+// Thử 1: chưa phát gì; khi khoá màn hình mới bắt đầu phát (như app v1.9)
+function start1Hidden() {
+  el = new Audio(); let k = 0;
+  el.onended = () => { tick(1); el.src = urls[++k % 4]; el.play().catch(() => {}); };
+  el.src = urls[0];
+  el.play().then(() => tick(1)).catch(() => {});
+}
+document.getElementById('t1').onclick = () => {
+  stopAll(); newStats(1); pending1 = true;
+  document.getElementById('r1').textContent = 'Đã sẵn sàng — giờ hãy khoá màn hình (sẽ bắt đầu bíp lúc khoá)';
+};
+
+// Thử 2: phát ngay, mỗi tiếng bíp là một tệp (đổi src mỗi lần)
+document.getElementById('t2').onclick = () => {
+  stopAll(); newStats(2);
+  el = new Audio(); let k = 0;
+  el.onended = () => { el.src = urls[++k % 4]; el.play().then(() => { tick(2); show(2); }).catch(() => {}); };
+  el.src = urls[0];
+  el.play().then(() => { tick(2); show(2); }).catch((e) => { document.getElementById('r2').textContent = 'Lỗi: ' + e.message; });
+  mediaSession('Thử 2');
+};
+
+// Thử 3: Web Audio → MediaStream → 1 thẻ <audio> phát liên tục; tiếng bíp được xếp lịch vào luồng
+document.getElementById('t3').onclick = async () => {
+  stopAll(); newStats(3);
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const dest = ctx.createMediaStreamDestination();
+  el = new Audio(); el.srcObject = dest.stream;
+  await el.play().catch((e) => { document.getElementById('r3').textContent = 'Lỗi: ' + e.message; });
+  mediaSession('Thử 3');
+  const buffers = await Promise.all(urls.map(async (u) => ctx.decodeAudioData(await (await fetch(u)).arrayBuffer())));
+  let t = ctx.currentTime + 0.1, k = 0;
+  const fill = () => { // xếp lịch trước ~6 giây
+    while (t < ctx.currentTime + 6) {
+      const src = ctx.createBufferSource(); src.buffer = buffers[k++ % 4]; src.connect(dest);
+      src.start(t); t += 1;
+      src.onended = () => { tick(3); if (!document.hidden) show(3); };
+    }
+  };
+  fill(); timer = setInterval(fill, 1000);
+};
+document.getElementById('stop').onclick = () => { stopAll(); [1, 2, 3].forEach((i) => { stats[i] = null; show(i); }); };
+</script>
+</body>
+</html>
