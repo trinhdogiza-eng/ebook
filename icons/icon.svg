@@ -1,6 +1,38 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#b5532c"/>
-  <path d="M256 150c-40-28-96-36-150-30v240c54-6 110 2 150 30 40-28 96-36 150-30V120c-54-6-110 2-150 30z" fill="#fbf5e6"/>
-  <path d="M256 150v240" stroke="#b5532c" stroke-width="12"/>
-  <path d="M330 120v86l22-16 22 16v-90" fill="#2e2a25"/>
+  <!-- Tree Ebook — cây mọc lên từ cuốn sách mở (Trình Đỗ) -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#21443a"/>
+      <stop offset="1" stop-color="#0d1c18"/>
+    </linearGradient>
+    <radialGradient id="glow" cx=".5" cy=".36" r=".5">
+      <stop offset="0" stop-color="#f6d68a" stop-opacity=".32"/>
+      <stop offset="1" stop-color="#f6d68a" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <rect width="512" height="512" rx="112" fill="url(#glow)"/>
+  <g fill="#f1e6cc">
+    <!-- tán cây -->
+    <circle cx="256" cy="168" r="92"/>
+    <circle cx="176" cy="196" r="64"/>
+    <circle cx="336" cy="196" r="64"/>
+    <circle cx="204" cy="126" r="60"/>
+    <circle cx="308" cy="126" r="60"/>
+    <circle cx="256" cy="96" r="58"/>
+    <circle cx="136" cy="236" r="40"/>
+    <circle cx="376" cy="236" r="40"/>
+    <ellipse cx="256" cy="236" rx="128" ry="48"/>
+    <!-- thân & rễ -->
+    <path d="M226 392c10-34 14-66 6-104l-30-26 10-10 28 20c4-14 6-24 6-34h20c0 12 2 22 8 34l26-20 10 10-28 26c-8 38-4 70 6 104z"/>
+    <!-- sách mở -->
+    <path d="M70 372c64-22 132-18 182 12v54c-50-28-118-32-182-12z"/>
+    <path d="M442 372c-64-22-132-18-182 12v54c50-28 118-32 182-12z"/>
+  </g>
+  <g fill="none" stroke="#c9b991" stroke-width="5" stroke-linecap="round" opacity=".8">
+    <path d="M104 392c40-10 80-8 120 6"/>
+    <path d="M104 408c40-10 80-8 120 6"/>
+    <path d="M408 392c-40-10-80-8-120 6"/>
+    <path d="M408 408c-40-10-80-8-120 6"/>
+  </g>
 </svg>
