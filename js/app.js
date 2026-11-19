@@ -1,10 +1,13 @@
 import * as db from './db.js';
 import * as sync from './sync.js';
 import { PdfReader, openPdf, pdfInfo, isPdfBuffer } from './pdf-reader.js';
-import { Speaker, ttsSupported, voices, isVietnamese, pickVoice, unlockSpeech, splitSentences } from './read-aloud.js';
+import {
+  Speaker, CloudSpeaker, ttsSupported, voices, isVietnamese, pickVoice, unlockSpeech, splitSentences,
+  googleVoices, GOOGLE_DEFAULT_VOICE, AiSpeaker, AI_VOICES, AI_DEFAULT_VOICE, aiDownload, aiVoiceStored,
+} from './read-aloud.js';
 
 /* global ePub */
-const APP_VERSION = '1.8';
+const APP_VERSION = '1.9';
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Phiên bản ${APP_VERSION}`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -28,7 +31,7 @@ if (!deviceId) { deviceId = Math.random().toString(36).slice(2) + Date.now().toS
 let deviceName = lsGet('deviceName', guessDeviceName());
 
 const settings = Object.assign(
-  { fontSize: 100, lineHeight: 1.5, fontFamily: '', theme: 'light', flow: 'paginated', pageAnim: 'slide', ttsRate: 1.5, ttsVoice: '' },
+  { fontSize: 100, lineHeight: 1.5, fontFamily: '', theme: 'light', flow: 'paginated', pageAnim: 'slide', ttsRate: 1.5, ttsVoice: '', ttsEngine: 'auto', gVoice: '', bgVoice: 'vi_VN-vais1000-medium' },
   lsGet('settings', {}),
 );
 const saveSettings = () => lsSet('settings', settings);
@@ -912,16 +915,74 @@ const RATES = [1, 1.25, 1.5, 1.75, 2];
 const BLOCKS = 'p,h1,h2,h3,h4,h5,h6,li,blockquote,dd,dt,pre,figcaption,td,th,div';
 let ttsRestartAfterRender = false;
 
-const speaker = ttsSupported ? new Speaker({
+// Hai bộ đọc: giọng có sẵn của máy (Web Speech) và giọng Google Cloud (phát như tệp âm thanh → đọc được
+// khi khoá màn hình). Khoá Google được lưu trong progress.json trên Drive (dùng chung mọi máy), không nằm trong mã.
+const gKey = () => sync.getPref('gTtsKey') || lsGet('gTtsKey', '');
+const useGoogle = () => settings.ttsEngine === 'google' || (settings.ttsEngine !== 'device' && !!gKey());
+const speakerOpts = {
   getRate: () => settings.ttsRate,
   getVoiceURI: () => settings.ttsVoice,
+  getKey: gKey,
+  getGoogleVoice: () => settings.gVoice || GOOGLE_DEFAULT_VOICE,
   onSegment: (seg) => ttsFollow(seg),
   onState: (state, ev) => ttsUI(state, ev),
+  onError: (msg) => toast(`Giọng Google: ${msg}`, null, null, 6000),
   getMeta: () => {
     if (R.meta?.cover && !R.coverUrl) R.coverUrl = URL.createObjectURL(R.meta.cover);
     return { title: R.meta?.title, artist: R.meta?.author, album: $('rChapter').textContent, artwork: R.coverUrl };
   },
-}) : null;
+};
+const deviceSpeaker = ttsSupported ? new Speaker(speakerOpts) : null;
+const googleSpeaker = new CloudSpeaker(speakerOpts);
+const aiSpeaker = new AiSpeaker({ ...speakerOpts, getAiVoice: () => settings.bgVoice || AI_DEFAULT_VOICE });
+let speaker = useGoogle() ? googleSpeaker : deviceSpeaker;
+if (location.hostname === 'localhost') Object.assign(window, { __dev: deviceSpeaker, __ai: aiSpeaker, __cur: () => speaker });
+
+/* ----- Khi khoá màn hình / chuyển app: chuyển sang giọng AI trong máy; mở lại: về giọng của máy ----- */
+// Giọng có sẵn của máy (Chrome Android) tự dừng khi app bị ẩn; giọng AI phát như tệp âm thanh nên chạy tiếp.
+const bgAiOn = () => settings.bgVoice && settings.bgVoice !== 'off' && !!AI_VOICES[settings.bgVoice];
+function chainProvider(segs, base) {
+  const q = segs.filter(Boolean);
+  return { next: async () => (q.length ? q.shift() : base.next()) };
+}
+// Chuyển việc đọc từ bộ này sang bộ kia, đọc tiếp đúng câu đang đọc (và các câu đã chuẩn bị sẵn)
+function handoff(from, to) {
+  if (!from || !to || from.state === 'idle' || !from.provider) return;
+  const segs = [from.current, ...(from.ahead || []).map((i) => i.seg)];
+  const prov = chainProvider(segs, from.provider);
+  const paused = from.state === 'paused';
+  from.stop(true);
+  speaker = to;
+  to.start(prov);
+  if (paused) to.pause();
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (speaker === deviceSpeaker && speaker.state === 'playing' && bgAiOn()) handoff(deviceSpeaker, aiSpeaker);
+  } else if (speaker === aiSpeaker && aiSpeaker.state !== 'idle' && deviceSpeaker) {
+    handoff(aiSpeaker, deviceSpeaker);
+  }
+});
+
+// Tải trước giọng AI (lần đầu) khi bắt đầu đọc to — để lúc khoá màn hình có ngay
+let aiDownloading = false;
+async function prepareBackgroundVoice() {
+  if (!bgAiOn() || aiDownloading) return;
+  const v = settings.bgVoice;
+  if (await aiVoiceStored(v)) return;
+  aiDownloading = true;
+  toast(`Đang tải giọng AI (${AI_VOICES[v].size}) để đọc tiếp khi khoá màn hình…`, null, null, 4000);
+  let last = 0;
+  try {
+    await aiDownload(v, (loaded, total) => {
+      const pct = total ? Math.round((loaded / total) * 100) : 0;
+      if (pct >= last + 20) { last = pct; toast(`Đang tải giọng AI… ${pct}%`, null, null, 2500); }
+    });
+    toast('Đã tải xong giọng AI — giờ khoá màn hình vẫn nghe tiếp được', null, null, 4000);
+  } catch (e) {
+    toast(`Không tải được giọng AI: ${e.message || e}`, null, null, 6000);
+  } finally { aiDownloading = false; }
+}
 let ttsNeedsResync = false; // đã đọc sang chương khác trong lúc app bị ẩn → khi quay lại thì nhảy tới chương đó
 
 if (location.hostname === 'localhost') window.__speaker = speaker; // chỉ để kiểm thử trên máy
@@ -1037,10 +1098,22 @@ function ttsFollow(seg) {
     return;
   }
   if (!R.rendition) return;
-  if (seg.offline) { // câu đọc từ nội dung sách khi app bị ẩn (chưa hiển thị)
-    ttsNeedsResync = seg.sectionIndex;
-    speaker?.setupMediaSession();
-    return;
+  if (seg.offline) { // câu lấy từ nội dung sách lúc app bị ẩn (chương chưa hiển thị)
+    if (document.hidden) { ttsNeedsResync = seg.sectionIndex; speaker?.setupMediaSession(); return; }
+    const c = findContents(seg.sectionIndex);
+    if (!c) { // đã mở lại app: nhảy tới chương đang đọc
+      ttsNeedsResync = false;
+      const sec = R.book?.spine.get(seg.sectionIndex);
+      if (sec) R.rendition.display(sec.href);
+      return;
+    }
+    // Chương đã hiển thị: tìm lại đúng câu đó trong trang để tô sáng & lật theo
+    c.ttsSegs ||= epubSegments(c, null);
+    c.ttsIdx ||= 0;
+    const k = c.ttsSegs.findIndex((s, i) => i >= c.ttsIdx && s.text === seg.text);
+    if (k < 0) return;
+    c.ttsIdx = k + 1;
+    seg = c.ttsSegs[k];
   }
   clearTtsHighlight();
   const win = seg.contents.window;
@@ -1061,11 +1134,20 @@ function ttsFollow(seg) {
 }
 
 function ttsStart() {
-  if (!speaker || !(R.rendition || R.pdf)) return;
-  if (!pickVoice(settings.ttsVoice)) {
+  if (!(R.rendition || R.pdf)) return;
+  const next = useGoogle() ? googleSpeaker : deviceSpeaker;
+  if (!next) { toast('Trình duyệt này không hỗ trợ đọc to'); return; }
+  if (speaker && speaker !== next) speaker.stop(true);
+  speaker = next;
+  if (speaker === googleSpeaker && !gKey()) {
+    toast('Chưa có khoá giọng Google — nhập ở Aa → Khoá giọng Google', null, null, 6000);
+    return;
+  }
+  if (speaker === deviceSpeaker && !pickVoice(settings.ttsVoice)) {
     toast('Máy này chưa có giọng tiếng Việt — giọng mặc định có thể đọc sai. Chọn giọng ở Aa → Giọng đọc.', null, null, 7000);
   }
   speaker.start(R.kind === 'pdf' ? pdfProvider() : epubProvider());
+  if (speaker === deviceSpeaker) prepareBackgroundVoice();
 }
 function ttsUI(state, ev) {
   $('ttsBar').hidden = state === 'idle';
@@ -1077,13 +1159,15 @@ function ttsUI(state, ev) {
   if (ev === 'end') toast('Đã đọc đến hết sách', null, null, 3000);
 }
 $('btnTts').onclick = () => {
-  if (!speaker) { toast('Trình duyệt này không hỗ trợ đọc to'); return; }
-  unlockSpeech();
-  if (speaker.state === 'idle') ttsStart();
+  if (!useGoogle()) unlockSpeech();
+  if (!speaker || speaker.state === 'idle') ttsStart();
   else if (speaker.state === 'playing') speaker.pause();
   else speaker.resume();
 };
-$('ttsPlay').onclick = () => { unlockSpeech(); if (speaker.state === 'playing') speaker.pause(); else speaker.resume(); };
+$('ttsPlay').onclick = () => {
+  if (speaker === deviceSpeaker) unlockSpeech();
+  if (speaker.state === 'playing') speaker.pause(); else speaker.resume();
+};
 $('ttsStop').onclick = () => speaker?.stop();
 $('ttsRate').onclick = () => {
   settings.ttsRate = RATES[(RATES.indexOf(settings.ttsRate) + 1) % RATES.length] || 1.5;
@@ -1093,19 +1177,71 @@ $('ttsRate').onclick = () => {
   speaker?.refresh();
 };
 
-// Danh sách giọng (giọng tiếng Việt lên đầu)
-function fillVoices() {
+// Danh sách giọng: giọng Google (nếu có khoá) và giọng của máy (giọng tiếng Việt lên đầu)
+let gVoiceCache = null;
+async function fillVoices() {
   const sel = $('ttsVoiceSel');
-  if (!ttsSupported) { $('ttsRow').hidden = true; $('ttsRateRow').hidden = true; return; }
-  const vs = voices().slice().sort((a, b) => (isVietnamese(b) - isVietnamese(a)) || a.name.localeCompare(b.name));
-  const auto = pickVoice('');
-  sel.innerHTML = `<option value="">Tự chọn${auto ? ` (${esc(auto.name)})` : ' — chưa có giọng tiếng Việt'}</option>`
-    + vs.map((v) => `<option value="${esc(v.voiceURI)}">${esc(v.name)} · ${esc(v.lang)}</option>`).join('');
-  sel.value = vs.some((v) => v.voiceURI === settings.ttsVoice) ? settings.ttsVoice : '';
+  const key = gKey();
+  $('gKeyState').textContent = key ? 'Đã lưu ✓' : 'Chưa có';
+  $('gKeyBtn').textContent = key ? 'Đổi' : 'Nhập khoá';
+  $('ttsEngineSel').value = settings.ttsEngine || 'auto';
+  $('bgVoiceSel').value = settings.bgVoice || 'off';
   $('ttsRateSel').value = String(settings.ttsRate);
+  let html = '';
+  if (key) {
+    if (!gVoiceCache) {
+      try { gVoiceCache = await googleVoices(key); } catch (e) { gVoiceCache = []; toast(`Giọng Google: ${e.message}`, null, null, 6000); }
+    }
+    html += `<optgroup label="Google (đọc được khi khoá màn hình)">${gVoiceCache.map((v) =>
+      `<option value="g:${esc(v.name)}">${esc(v.name.replace('vi-VN-', ''))} · ${esc(v.gender)} · ${esc(v.tier)}</option>`).join('')}</optgroup>`;
+  }
+  if (ttsSupported) {
+    const vs = voices().slice().sort((a, b) => (isVietnamese(b) - isVietnamese(a)) || a.name.localeCompare(b.name));
+    const auto = pickVoice('');
+    html += `<optgroup label="Giọng của máy"><option value="d:">Tự chọn${auto ? ` (${esc(auto.name)})` : ' — chưa có giọng tiếng Việt'}</option>`
+      + vs.map((v) => `<option value="d:${esc(v.voiceURI)}">${esc(v.name)} · ${esc(v.lang)}</option>`).join('')
+      + '</optgroup>';
+  }
+  sel.innerHTML = html;
+  sel.value = useGoogle() ? `g:${settings.gVoice || GOOGLE_DEFAULT_VOICE}` : `d:${settings.ttsVoice || ''}`;
+  if (!sel.value && sel.options.length) sel.selectedIndex = 0;
 }
-if (ttsSupported) speechSynthesis.addEventListener?.('voiceschanged', fillVoices);
-$('ttsVoiceSel').onchange = (e) => { settings.ttsVoice = e.target.value; saveSettings(); speaker?.refresh(); };
+if (ttsSupported) speechSynthesis.addEventListener?.('voiceschanged', () => { if (!$('settingsPanel').hidden) fillVoices(); });
+$('ttsVoiceSel').onchange = (e) => {
+  const v = e.target.value;
+  const wasPlaying = speaker && speaker.state !== 'idle';
+  if (v.startsWith('g:')) { settings.gVoice = v.slice(2); if (settings.ttsEngine === 'device') settings.ttsEngine = 'auto'; }
+  else { settings.ttsVoice = v.slice(2); settings.ttsEngine = 'device'; }
+  saveSettings();
+  $('ttsEngineSel').value = settings.ttsEngine;
+  const target = useGoogle() ? googleSpeaker : deviceSpeaker;
+  if (wasPlaying && target !== speaker) { speaker.stop(true); ttsStart(); } else speaker?.refresh(true);
+};
+$('bgVoiceSel').onchange = (e) => {
+  settings.bgVoice = e.target.value;
+  saveSettings();
+  if (speaker === deviceSpeaker && speaker.state !== 'idle') prepareBackgroundVoice();
+};
+$('ttsEngineSel').onchange = (e) => {
+  settings.ttsEngine = e.target.value;
+  saveSettings();
+  const wasPlaying = speaker && speaker.state !== 'idle';
+  if (wasPlaying) { speaker.stop(true); ttsStart(); }
+  fillVoices();
+};
+// Nhập khoá Google một lần → lưu lên Drive để mọi thiết bị dùng chung
+$('gKeyBtn').onclick = async () => {
+  const key = (prompt('Dán khoá API Google Cloud Text-to-Speech (bắt đầu bằng AIza…):') || '').trim();
+  if (!key) return;
+  try {
+    gVoiceCache = await googleVoices(key);
+  } catch (e) { toast(`Khoá không dùng được: ${e.message}`, null, null, 7000); return; }
+  lsSet('gTtsKey', key);
+  try { await sync.setPref('gTtsKey', key); toast('Đã lưu khoá giọng Google cho mọi thiết bị', null, null, 4000); }
+  catch { toast('Đã lưu khoá trên máy này (chưa đồng bộ được lên Drive — hãy đăng nhập Google Drive)', null, null, 6000); }
+  if (settings.ttsEngine === 'device') { settings.ttsEngine = 'auto'; saveSettings(); }
+  fillVoices();
+};
 $('ttsRateSel').onchange = (e) => {
   settings.ttsRate = Number(e.target.value) || 1.5;
   saveSettings();
