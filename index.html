@@ -129,9 +129,29 @@
           <option value="none">Không</option>
         </select>
       </div>
+      <div class="setting">
+        <span>Bộ đọc</span>
+        <select id="ttsEngineSel">
+          <option value="auto">Tự động (Google nếu có khoá)</option>
+          <option value="google">Giọng Google</option>
+          <option value="device">Giọng của máy</option>
+        </select>
+      </div>
       <div class="setting" id="ttsRow">
         <span>Giọng đọc</span>
         <select id="ttsVoiceSel"></select>
+      </div>
+      <div class="setting">
+        <span>Khi khoá màn hình<br><small class="hint">hoặc chuyển app</small></span>
+        <select id="bgVoiceSel">
+          <option value="vi_VN-vais1000-medium">Đọc tiếp bằng giọng AI rõ (tải 63 MB)</option>
+          <option value="vi_VN-vivos-x_low">Đọc tiếp bằng giọng AI nhẹ (tải 28 MB)</option>
+          <option value="off">Dừng đọc</option>
+        </select>
+      </div>
+      <div class="setting">
+        <span>Khoá giọng Google<br><small class="hint" id="gKeyState">Chưa có</small></span>
+        <button type="button" id="gKeyBtn" class="btn small">Nhập khoá</button>
       </div>
       <div class="setting" id="ttsRateRow">
         <span>Tốc độ đọc</span>
