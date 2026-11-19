@@ -4,7 +4,7 @@ import { PdfReader, openPdf, pdfInfo, isPdfBuffer } from './pdf-reader.js';
 import { Speaker, ttsSupported, voices, isVietnamese, pickVoice, unlockSpeech, splitSentences } from './read-aloud.js';
 
 /* global ePub */
-const APP_VERSION = '1.7';
+const APP_VERSION = '1.8';
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Phiên bản ${APP_VERSION}`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -403,12 +403,24 @@ async function createRendition(cfi) {
     // "continuous": epub.js nạp sẵn chương kế bên cạnh chương đang đọc → sang chương mới cũng trượt mượt
     // như lật trang thường (không phải xoá màn hình rồi dựng lại chương).
     manager: 'continuous',
+    // Nạp sẵn chương kế/chương trước khi còn cách khoảng 4 màn hình (mặc định epub.js chỉ ~500px → lật
+    // nhanh thì tới trang cuối chương mà chương kế chưa kịp nạp).
+    offset: Math.max(1600, window.innerWidth * 4),
     spread: 'auto', minSpreadWidth: 900,
     // Safari (iPhone/iPad/Mac) không chuyển sự kiện chạm/vuốt vào iframe bị sandbox thiếu "allow-scripts",
     // nên phải bật. Script trong sách vẫn bị chặn: xem sanitizeSection() (xoá <script> + CSP script-src 'none').
     allowScriptedContent: true,
   });
   R.rendition = rendition;
+  // epub.js tự đặt lại khoảng nạp sẵn = 1 trang mỗi lần sắp trang → ghi đè lại giá trị lớn hơn
+  rendition.started?.then(() => {
+    const m = rendition.manager;
+    const look = Math.max(1600, window.innerWidth * 4);
+    if (!m || typeof m.updateLayout !== 'function') return;
+    const orig = m.updateLayout.bind(m);
+    m.updateLayout = (...args) => { const r = orig(...args); m.settings.offset = look; return r; };
+    m.settings.offset = look;
+  }).catch(() => {});
   rendition.hooks.content.register((contents) => { normalizeText(contents.document); injectStyle(contents); });
   rendition.on('relocated', onRelocated);
   rendition.on('click', onFrameClick);
@@ -424,6 +436,8 @@ async function createRendition(cfi) {
     console.warn('Vị trí không hợp lệ, mở từ đầu', e);
     await rendition.display();
   }
+  // Nạp sẵn chương kế ngay khi mở (epub.js chỉ tự kiểm tra khi có cuộn trang)
+  setTimeout(() => { try { if (R.rendition === rendition) rendition.manager?.check?.(); } catch { /* bỏ qua */ } }, 400);
   if (ttsRestartAfterRender) { ttsRestartAfterRender = false; setTimeout(ttsStart, 300); }
 }
 
@@ -634,6 +648,8 @@ function onRemoteChange(data) {
 async function closeBook() {
   speaker?.stop();
   ttsRestartAfterRender = false;
+  ttsNeedsResync = false;
+  if (R.coverUrl) { URL.revokeObjectURL(R.coverUrl); R.coverUrl = null; }
   flushPush();
   R.unwatch(); R.unwatch = () => {};
   clearTimeout(rerenderTimer);
@@ -692,8 +708,8 @@ function slideIn(dir) {
   const v = $('viewer');
   if (reduceMotion() || !v.animate) return;
   v.animate(
-    [{ transform: `translate3d(${dir * 48}px,0,0)`, opacity: 0 }, { transform: 'none', opacity: 1 }],
-    { duration: 260, easing: EASE },
+    [{ transform: `translate3d(${dir * 100}%,0,0)` }, { transform: 'none' }],
+    { duration: 300, easing: EASE },
   );
 }
 
@@ -717,8 +733,10 @@ async function turn(dir, fromScroll, shift = 0) {
     await animShift(shift + dir * delta, 0, 320);
     R.rendition?.reportLocation();
   } else {
-    if (shift) await animShift(shift, 0, 140);
+    // Chương kế chưa kịp nạp: cho trang cũ trượt ra, rồi chương mới trượt vào
+    await animShift(shift, -dir * c.offsetWidth, 240);
     await go();
+    setShift(0);
     slideIn(dir);
   }
 }
@@ -899,7 +917,12 @@ const speaker = ttsSupported ? new Speaker({
   getVoiceURI: () => settings.ttsVoice,
   onSegment: (seg) => ttsFollow(seg),
   onState: (state, ev) => ttsUI(state, ev),
+  getMeta: () => {
+    if (R.meta?.cover && !R.coverUrl) R.coverUrl = URL.createObjectURL(R.meta.cover);
+    return { title: R.meta?.title, artist: R.meta?.author, album: $('rChapter').textContent, artwork: R.coverUrl };
+  },
 }) : null;
+let ttsNeedsResync = false; // đã đọc sang chương khác trong lúc app bị ẩn → khi quay lại thì nhảy tới chương đó
 
 if (location.hostname === 'localhost') window.__speaker = speaker; // chỉ để kiểm thử trên máy
 
@@ -930,7 +953,7 @@ function epubSegments(contents, startNode) {
     for (const [s, e] of splitSentences(full)) {
       const range = doc.createRange();
       try { range.setStart(...at(s)); range.setEnd(...at(e)); } catch { continue; }
-      segs.push({ text: full.slice(s, e).trim(), range, contents });
+      segs.push({ text: full.slice(s, e).trim().normalize('NFC'), range, contents });
     }
   }
   return segs;
@@ -953,6 +976,14 @@ function epubProvider() {
         const sec = R.book?.spine.get(secIndex + 1);
         if (!sec) return null;
         let c = findContents(sec.index);
+        if (!c && document.hidden) {
+          // App đang ẩn (khoá màn hình / chuyển app): trình duyệt tạm dừng vẽ trang nên không dựng được
+          // chương mới → đọc thẳng từ nội dung sách; quay lại app sẽ nhảy tới chương này.
+          const doc = await sec.load(R.book.load.bind(R.book));
+          secIndex = sec.index;
+          queue = epubSegments({ document: doc.ownerDocument || doc }, null).map((s) => ({ ...s, offline: true, sectionIndex: sec.index }));
+          continue;
+        }
         // Chương kế thường đã được nạp sẵn (chế độ continuous); nếu đang nạp dở thì đợi một chút
         for (let i = 0; !c && i < 20; i++) {
           try { R.rendition.manager?.check?.(); } catch { /* bỏ qua */ }
@@ -1006,6 +1037,11 @@ function ttsFollow(seg) {
     return;
   }
   if (!R.rendition) return;
+  if (seg.offline) { // câu đọc từ nội dung sách khi app bị ẩn (chưa hiển thị)
+    ttsNeedsResync = seg.sectionIndex;
+    speaker?.setupMediaSession();
+    return;
+  }
   clearTtsHighlight();
   const win = seg.contents.window;
   try { if (win.CSS?.highlights && win.Highlight) win.CSS.highlights.set('tts', new win.Highlight(seg.range)); } catch { /* bỏ qua */ }
@@ -1096,6 +1132,11 @@ document.addEventListener('visibilitychange', () => {
   else {
     sync.resume(!R.id).then(updateAccountUI).catch(() => {}); // quay lại app: lấy tiến độ mới
     if (speaker?.state === 'playing') speaker.lockScreen(); // khoá màn hình bị nhả khi ẩn app
+    if (ttsNeedsResync !== false && R.rendition) { // trong lúc ẩn đã đọc sang chương khác → nhảy tới đó
+      const sec = R.book?.spine.get(ttsNeedsResync);
+      ttsNeedsResync = false;
+      if (sec && !findContents(sec.index)) R.rendition.display(sec.href);
+    }
   }
 });
 window.addEventListener('pagehide', flushPush);
