@@ -69,6 +69,10 @@ code { font-size: .9em; background: var(--line); padding: 1px 5px; border-radius
   border-bottom: 1px solid var(--line);
 }
 .topbar h1 { margin: 0; font-size: 24px; }
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand img { border-radius: 8px; flex: none; }
+.brand span { display: flex; flex-direction: column; line-height: 1.1; letter-spacing: -.01em; }
+.brand small { font-size: 12px; font-weight: 500; color: var(--muted); letter-spacing: 0; }
 .actions { display: flex; gap: 8px; align-items: center; }
 .lib-main { flex: 1; overflow-y: auto; padding: 20px 16px calc(32px + var(--safe-bottom)); }
 .grid {
