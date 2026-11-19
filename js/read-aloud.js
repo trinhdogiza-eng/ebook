@@ -59,43 +59,48 @@ export function splitSentences(text, max = 220) {
   return out;
 }
 
-// Âm thanh "im lặng" phát lặp trong lúc đọc to: Android coi app như đang phát nhạc nên không đóng băng
-// trang khi khoá màn hình / chuyển app → giọng đọc vẫn đọc tiếp các câu sau. Tín hiệu cực nhỏ (≈ -90 dB),
-// tai người không nghe thấy, nhưng không phải số 0 tuyệt đối (để hệ thống tính là "đang phát âm thanh").
-let keepAliveUrl = null;
-function keepAliveSrc() {
-  if (keepAliveUrl) return keepAliveUrl;
-  const rate = 8000, n = rate * 2; // 2 giây
-  const buf = new ArrayBuffer(44 + n * 2);
-  const v = new DataView(buf);
-  const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
-  str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
-  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
-  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
-  str(36, 'data'); v.setUint32(40, n * 2, true);
-  for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, i % 2 ? 1 : -1, true);
-  keepAliveUrl = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
-  return keepAliveUrl;
-}
-
-// Một thẻ <audio> dùng chung cho mọi bộ đọc: được "mở khoá" khi người dùng bấm 🔊, nên về sau (kể cả khi
-// đã khoá màn hình) vẫn phát tiếp được mà không cần chạm thêm.
-let shared = null;
-export function sharedPlayer() {
-  if (!shared) {
-    shared = new Audio();
-    shared.preload = 'auto';
-    shared.setAttribute('playsinline', '');
-  }
-  return shared;
-}
-function playSilence(owner) {
-  const p = sharedPlayer();
-  p.owner = owner;
-  p.loop = true;
-  if (p.src !== keepAliveSrc()) p.src = keepAliveSrc();
-  p.play().catch(() => {});
-}
+// ===== Luồng âm thanh liền mạch (đã thử trên Android: phát tiếp được khi khoá màn hình) =====
+// Web Audio → MediaStream → 1 thẻ <audio> phát liên tục từ lúc bấm 🔊 và không bao giờ đổi nguồn.
+// Các câu (giọng AI / Google) được giải mã rồi "đổ" vào luồng này. Kiểu đổi tệp âm thanh liên tục thì
+// Android chặn khi khoá màn hình, nên không dùng nữa.
+export const stream = {
+  ctx: null, dest: null, out: null, nodes: new Set(),
+  // Phải gọi trong lúc người dùng bấm nút (lần đầu)
+  ensure() {
+    try {
+      if (!this.ctx) {
+        const C = window.AudioContext || window.webkitAudioContext;
+        this.ctx = new C();
+        if (this.ctx.createMediaStreamDestination) {
+          this.dest = this.ctx.createMediaStreamDestination();
+          this.out = new Audio();
+          this.out.setAttribute('playsinline', '');
+          this.out.srcObject = this.dest.stream;
+        } else {
+          this.dest = this.ctx.destination;
+        }
+      }
+      this.ctx.resume?.().catch?.(() => {});
+      this.out?.play().catch(() => {});
+    } catch (e) { console.warn('Không tạo được luồng âm thanh', e); }
+  },
+  suspend() { try { this.ctx?.suspend(); this.out?.pause(); } catch { /* bỏ qua */ } },
+  resume() { this.ensure(); },
+  decode(arrayBuffer) { this.ensure(); return this.ctx.decodeAudioData(arrayBuffer); },
+  play(buffer, onEnded) {
+    const src = this.ctx.createBufferSource();
+    src.buffer = buffer;
+    src.connect(this.dest);
+    src.onended = () => { this.nodes.delete(src); onEnded?.(); };
+    this.nodes.add(src);
+    src.start();
+    return src;
+  },
+  stopAll() {
+    for (const n of this.nodes) { n.onended = null; try { n.stop(); } catch { /* đã dừng */ } }
+    this.nodes.clear();
+  },
+};
 
 export class Speaker {
   // opts: { getRate(), getVoiceURI(), onSegment(seg), onState(state, event), getMeta() → {title, artist, album, artwork} }
@@ -107,7 +112,9 @@ export class Speaker {
   }
 
   async start(provider) {
+    this.keepStream = true; // không tạm dừng luồng khi khởi động lại
     this.stop(true);
+    this.keepStream = false;
     this.provider = provider;
     this.state = 'playing';
     this.keepAlive(true); // phải gọi ngay trong lúc người dùng bấm nút (trình duyệt mới cho phát âm thanh)
@@ -117,14 +124,11 @@ export class Speaker {
     await this.advance(++this.gen);
   }
 
+  // Giữ luồng âm thanh chạy trong lúc đọc (để khi khoá màn hình, giọng AI nối tiếp vào luồng ngay)
   keepAlive(on) {
-    try {
-      const p = sharedPlayer();
-      if (!on) { if (p.owner === this) p.pause(); return; }
-      playSilence(this);
-    } catch { /* bỏ qua */ }
+    if (on) stream.ensure();
+    else if (!this.keepStream) stream.suspend();
   }
-  get audio() { return sharedPlayer(); }
 
   // Điều khiển trên màn hình khoá / thanh thông báo (Android): Phát, Tạm dừng, Dừng
   setupMediaSession() {
@@ -241,15 +245,15 @@ export class Speaker {
   }
 }
 
-/* ================= Giọng Google Cloud (đọc được khi khoá màn hình) ================= */
-// Giọng có sẵn của Chrome Android bị dừng khi khoá màn hình. Giọng Google Cloud trả về tệp âm thanh MP3,
-// phát bằng thẻ <audio> như một bài nhạc → Android/iOS cho phát tiếp ở nền, có điều khiển trên màn hình khoá.
+/* ================= Bộ đọc phát qua luồng âm thanh (giọng Google Cloud / giọng AI trong máy) ================= */
+// Mỗi câu được tạo thành âm thanh (đúng tốc độ đọc ngay khi tạo → không bị méo giọng), giải mã rồi phát
+// trong luồng liền mạch ở trên → vẫn đọc tiếp khi khoá màn hình / chuyển app.
 const GTTS = 'https://texttospeech.googleapis.com/v1';
 const AHEAD = 3; // số câu chuẩn bị trước để không bị ngắt quãng
 
 export const GOOGLE_DEFAULT_VOICE = 'vi-VN-Wavenet-A';
 
-// Danh sách giọng tiếng Việt (gọi API): [{ name, gender, tier }]
+// Danh sách giọng tiếng Việt của Google (gọi API): [{ name, gender, tier }]
 export async function googleVoices(key) {
   const r = await fetch(`${GTTS}/voices?languageCode=vi-VN&key=${encodeURIComponent(key)}`);
   const j = await r.json().catch(() => ({}));
@@ -272,14 +276,14 @@ function googleError(status, j) {
   return msg || `Lỗi Google ${status}`;
 }
 
-async function googleSynth(key, voice, text) {
+async function googleSynth(key, voice, rate, text) {
   const r = await fetch(`${GTTS}/text:synthesize?key=${encodeURIComponent(key)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       input: { text },
       voice: { languageCode: 'vi-VN', name: voice },
-      audioConfig: { audioEncoding: 'MP3' },
+      audioConfig: { audioEncoding: 'MP3', speakingRate: rate },
     }),
   });
   const j = await r.json().catch(() => ({}));
@@ -287,7 +291,7 @@ async function googleSynth(key, voice, text) {
   const bin = atob(j.audioContent || '');
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return URL.createObjectURL(new Blob([bytes], { type: 'audio/mpeg' }));
+  return stream.decode(bytes.buffer);
 }
 
 export class CloudSpeaker extends Speaker {
@@ -295,30 +299,27 @@ export class CloudSpeaker extends Speaker {
   constructor(opts) {
     super(opts);
     this.ahead = [];
-    this.player = sharedPlayer();
-    this.player.addEventListener('ended', () => {
-      if (this.player.owner === this && !this.player.loop && this.state === 'playing') this.playNext(this.gen);
-    });
   }
 
-  // Tạo âm thanh cho 1 câu → Promise<blob URL>. Lớp con (giọng AI) thay bằng cách tạo khác.
-  synth(text) { return googleSynth(this.getKey(), this.getGoogleVoice(), text); }
+  // Tạo âm thanh cho 1 câu → Promise<AudioBuffer>. Lớp con (giọng AI) thay bằng cách tạo khác.
+  synth(text) { return googleSynth(this.getKey(), this.getGoogleVoice(), this.getRate(), text); }
 
   async start(provider) {
+    this.keepStream = true; // không tạm dừng luồng khi khởi động lại
     this.stop(true);
+    this.keepStream = false;
     this.provider = provider;
     this.done = false;
     this.errors = 0;
     this.state = 'playing';
-    // Phát âm thanh im lặng trong lúc chuẩn bị câu đầu: giữ app "đang phát" và giữ quyền phát âm thanh
-    playSilence(this);
+    stream.ensure();
     this.setupMediaSession();
     this.lockScreen();
     this.emit();
     await this.playNext(++this.gen);
   }
 
-  // Chuẩn bị trước vài câu: lấy câu từ sách và gửi Google tạo âm thanh song song
+  // Chuẩn bị trước vài câu: lấy câu từ sách và tạo âm thanh
   async fill() {
     if (this.filling) return this.filling;
     const gen = this.gen;
@@ -328,12 +329,15 @@ export class CloudSpeaker extends Speaker {
         try { seg = await this.provider.next(); } catch (e) { console.warn('Đọc to:', e); }
         if (gen !== this.gen) return;
         if (!seg) { this.done = true; break; }
-        const item = { seg };
-        item.url = this.synth(seg.text).catch((e) => { item.err = e; return null; });
-        this.ahead.push(item);
+        this.ahead.push(this.makeItem(seg));
       }
     })();
     try { await this.filling; } finally { this.filling = null; }
+  }
+  makeItem(seg) {
+    const item = { seg };
+    item.buf = this.synth(seg.text).catch((e) => { item.err = e; return null; });
+    return item;
   }
 
   async playNext(gen) {
@@ -343,32 +347,24 @@ export class CloudSpeaker extends Speaker {
     const item = this.ahead.shift();
     if (!item) { this.finish(); return; }
     this.fill();
-    const url = await item.url;
-    if (gen !== this.gen) { if (url) URL.revokeObjectURL(url); return; }
-    if (!url) {
-      this.onError?.(item.err?.message || 'Không tạo được giọng Google');
+    const buf = await item.buf;
+    if (gen !== this.gen) return;
+    if (!buf) {
+      this.onError?.(item.err?.message || 'Không tạo được giọng đọc');
       if (++this.errors >= 2) { this.stop(); return; }
       this.playNext(gen);
       return;
     }
     this.errors = 0;
-    if (this.curUrl) URL.revokeObjectURL(this.curUrl);
-    this.curUrl = url;
     this.current = item.seg;
-    const p = this.player;
-    p.owner = this;
-    p.loop = false;
-    p.src = url;
-    p.defaultPlaybackRate = this.getRate();
-    p.playbackRate = this.getRate();
-    try { await p.play(); } catch (e) { console.warn('Không phát được', e); }
+    stream.play(buf, () => { if (gen === this.gen && this.state === 'playing') this.playNext(gen); });
     this.onSegment?.(item.seg);
   }
 
   pause() {
     if (this.state !== 'playing') return;
     this.state = 'paused';
-    if (this.player.owner === this) this.player.pause();
+    stream.suspend(); // tạm dừng cả luồng → câu đang đọc dừng đúng chỗ
     this.unlockScreen();
     this.emit();
   }
@@ -376,29 +372,15 @@ export class CloudSpeaker extends Speaker {
   resume() {
     if (this.state !== 'paused') return;
     this.state = 'playing';
+    stream.resume();
     this.lockScreen();
     this.emit();
-    if (this.current && this.player.owner === this && !this.player.loop) this.player.play().catch(() => {});
-    else this.playNext(this.gen);
+    if (!stream.nodes.size) this.playNext(this.gen);
   }
 
-  // Đổi tốc độ: áp dụng ngay; đổi giọng: tạo lại âm thanh cho các câu đã chuẩn bị
-  refresh(voiceChanged) {
-    this.player.defaultPlaybackRate = this.getRate();
-    this.player.playbackRate = this.getRate();
-    if (voiceChanged) {
-      this.ahead.forEach((it) => it.url.then((u) => u && URL.revokeObjectURL(u)));
-      this.ahead = this.ahead.map(({ seg }) => {
-        const item = { seg };
-        item.url = this.synth(seg.text).catch((e) => { item.err = e; return null; });
-        return item;
-      });
-    }
-  }
-
-  clearAhead() {
-    this.ahead.forEach((it) => it.url.then((u) => u && URL.revokeObjectURL(u)));
-    this.ahead = [];
+  // Đổi tốc độ / giọng: các câu đã chuẩn bị được tạo lại theo cài đặt mới
+  refresh() {
+    this.ahead = this.ahead.map(({ seg }) => this.makeItem(seg));
   }
 
   stop(silent) {
@@ -406,9 +388,9 @@ export class CloudSpeaker extends Speaker {
     const was = this.state;
     this.state = 'idle';
     this.current = null;
-    if (this.player.owner === this) this.player.pause();
-    this.clearAhead();
-    if (this.curUrl) { URL.revokeObjectURL(this.curUrl); this.curUrl = null; }
+    stream.stopAll();
+    this.ahead = [];
+    if (!this.keepStream) stream.suspend();
     this.unlockScreen();
     if (!silent && was !== 'idle') this.emit('stop');
     else this.updateMediaState();
@@ -417,10 +399,57 @@ export class CloudSpeaker extends Speaker {
   finish() {
     this.state = 'idle';
     this.current = null;
-    if (this.player.owner === this) this.player.pause();
+    stream.suspend();
     this.unlockScreen();
     this.emit('end');
   }
+}
+
+// Tăng tốc âm thanh mà giữ nguyên cao độ (WSOLA): cắt thành các khung ~40ms, lấy khung cách nhau xa hơn
+// (theo tốc độ) rồi ghép chồng lên nhau ở chỗ khớp sóng nhất → giọng nhanh hơn nhưng không bị "chíp chíp".
+export function timeStretch(buffer, rate) {
+  if (!buffer || Math.abs(rate - 1) < 0.02) return buffer;
+  const sr = buffer.sampleRate;
+  const input = buffer.getChannelData(0);
+  const N = Math.round(sr * 0.04);
+  const Hs = N >> 1;                   // bước ở đầu ra
+  const Ha = Math.round(Hs * rate);    // bước ở đầu vào
+  const tol = Math.round(N / 8);       // khoảng dò để khớp sóng
+  const win = new Float32Array(N);
+  for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (N - 1));
+  const outLen = Math.ceil(input.length / rate) + N;
+  const out = new Float32Array(outLen);
+  const norm = new Float32Array(outLen);
+  const addFrame = (inStart, outStart) => {
+    for (let i = 0; i < N && outStart + i < outLen; i++) {
+      out[outStart + i] += (input[inStart + i] || 0) * win[i];
+      norm[outStart + i] += win[i];
+    }
+  };
+  addFrame(0, 0);
+  let prev = 0, inPos = 0, outPos = 0;
+  while (inPos + Ha + N + tol < input.length) {
+    const nominal = inPos + Ha;
+    const ref = prev + Hs; // đoạn "tự nhiên" nối tiếp khung trước
+    let best = 0, bestC = -Infinity;
+    for (let k = -tol; k <= tol; k += 2) {
+      const a = nominal + k;
+      if (a < 0) continue;
+      let c = 0;
+      for (let j = 0; j < Hs; j += 4) c += input[a + j] * input[ref + j];
+      if (c > bestC) { bestC = c; best = k; }
+    }
+    const start = nominal + best;
+    outPos += Hs;
+    addFrame(start, outPos);
+    prev = start;
+    inPos = nominal;
+  }
+  const len = Math.min(outLen, outPos + N);
+  const res = stream.ctx.createBuffer(1, len, sr);
+  const ch = res.getChannelData(0);
+  for (let i = 0; i < len; i++) ch[i] = norm[i] > 1e-3 ? out[i] / norm[i] : 0;
+  return res;
 }
 
 /* ================= Giọng AI chạy trong máy (Piper) — dùng khi khoá màn hình / chuyển app ================= */
@@ -439,6 +468,8 @@ export const AI_DEFAULT_VOICE = 'vi_VN-vais1000-medium';
 let piper = null;
 let piperSession = null;
 let piperVoice = null;
+let piperConfig = null; // cấu hình giọng (để chỉnh tốc độ nói)
+let piperBaseLength = 1;
 let piperChain = Promise.resolve();
 const loadPiper = async () => (piper ||= await import(PIPER));
 
@@ -456,19 +487,41 @@ async function aiSession(voiceId) {
   if (piperSession && piperVoice === voiceId) return piperSession;
   const P = await loadPiper();
   P.TtsSession._instance = null; // gói chỉ giữ 1 phiên → tạo phiên mới khi đổi giọng
-  piperSession = await P.TtsSession.create({
-    voiceId,
-    wasmPaths: { onnxWasm: ORT_WASM, piperData: `${PIPER_WASM}.data`, piperWasm: `${PIPER_WASM}.wasm` },
-  });
+  // Bắt lấy đối tượng cấu hình giọng khi gói đọc nó (gói không cho chỉnh tốc độ nói qua tham số),
+  // để về sau đặt length_scale = tốc độ mong muốn → giọng nói nhanh hơn mà không bị cao giọng.
+  const parse = JSON.parse;
+  let captured = null;
+  JSON.parse = function patched(text, reviver) {
+    const v = parse.call(this, text, reviver);
+    if (!captured && v && v.inference && v.audio) captured = v;
+    return v;
+  };
+  try {
+    piperSession = await P.TtsSession.create({
+      voiceId,
+      wasmPaths: { onnxWasm: ORT_WASM, piperData: `${PIPER_WASM}.data`, piperWasm: `${PIPER_WASM}.wasm` },
+    });
+  } finally { JSON.parse = parse; }
+  piperConfig = captured;
+  piperBaseLength = captured?.inference?.length_scale || 1;
   piperVoice = voiceId;
   return piperSession;
 }
+// Khởi động sẵn giọng AI (đọc mô hình vào bộ nhớ) lúc app còn mở → khi khoá màn hình có tiếng ngay
+export function aiWarmup(voiceId) {
+  const run = piperChain.then(() => aiSession(voiceId));
+  piperChain = run.catch(() => {});
+  return run;
+}
 // Tạo từng câu một (mô hình không chạy song song được)
-function aiSynth(voiceId, text) {
+function aiSynth(voiceId, rate, text) {
   const run = piperChain.then(async () => {
     const s = await aiSession(voiceId);
+    // Tạo giọng ở tốc độ gốc rồi tăng tốc giữ nguyên cao độ (chỉnh length_scale của Piper chỉ nhanh được
+    // tối đa ~1.4× vì các khoảng ngừng không ngắn lại).
+    if (piperConfig?.inference) piperConfig.inference.length_scale = piperBaseLength;
     const blob = await s.predict(text);
-    return URL.createObjectURL(blob);
+    return timeStretch(await stream.decode(await blob.arrayBuffer()), rate || 1);
   });
   piperChain = run.catch(() => {});
   return run;
@@ -476,5 +529,5 @@ function aiSynth(voiceId, text) {
 
 export class AiSpeaker extends CloudSpeaker {
   // opts thêm: getAiVoice()
-  synth(text) { return aiSynth(this.getAiVoice(), text); }
+  synth(text) { return aiSynth(this.getAiVoice(), this.getRate(), text); }
 }
