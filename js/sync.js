@@ -364,31 +364,40 @@ function startPolling() {
 }
 
 /* ---------- duyệt & tải sách từ đám mây ---------- */
-const isEpub = (name, mime) => /\.epub$/i.test(name || '') || mime === 'application/epub+zip';
+// Sách đọc được: EPUB và PDF
+const isBook = (name, mime) => /\.(epub|pdf)$/i.test(name || '') || mime === 'application/epub+zip' || mime === 'application/pdf';
+const G_EPUB = "(mimeType='application/epub+zip' or name contains '.epub')";
+const G_PDF = "(mimeType='application/pdf' or name contains '.pdf')";
+const G_BOOK_OR_FOLDER = `(mimeType='application/vnd.google-apps.folder' or ${G_EPUB} or ${G_PDF})`;
 
 // Trả về [{ id, name, isFolder, size }]
-// Thư mục ảo ở cấp gốc: "Tất cả sách EPUB" và (Google Drive) "Được chia sẻ với tôi"
+// Thư mục ảo ở cấp gốc: "Tất cả sách EPUB", "Tất cả PDF" và (Google Drive) "Được chia sẻ với tôi"
 export const ALL_EPUBS = '__all';
+export const ALL_PDFS = '__allpdf';
 export const SHARED = '__shared';
 
 export async function listFolder(folderId) {
-  if (folderId === ALL_EPUBS) return allEpubs();
+  if (folderId === ALL_EPUBS) return allOfKind('epub');
+  if (folderId === ALL_PDFS) return allOfKind('pdf');
   if (!folderId) {
-    const virtual = [{ id: ALL_EPUBS, name: 'Tất cả sách EPUB', isFolder: true, icon: '📚' }];
+    const virtual = [
+      { id: ALL_EPUBS, name: 'Tất cả sách EPUB', isFolder: true, icon: '📚' },
+      { id: ALL_PDFS, name: 'Tất cả PDF', isFolder: true, icon: '📄' },
+    ];
     if (session.provider === 'gdrive') virtual.push({ id: SHARED, name: 'Được chia sẻ với tôi', isFolder: true, icon: '👥' });
     return [...virtual, ...(await listFolderReal(null))];
   }
-  if (folderId === SHARED) {
-    return gCollect("sharedWithMe and trashed=false and (mimeType='application/vnd.google-apps.folder' or name contains '.epub' or mimeType='application/epub+zip')");
-  }
+  if (folderId === SHARED) return gCollect(`sharedWithMe and trashed=false and ${G_BOOK_OR_FOLDER}`);
   return listFolderReal(folderId);
 }
 
-async function allEpubs() {
+async function allOfKind(kind) {
   if (session.provider === 'onedrive') {
-    return (await msCollect(`${GRAPH}/me/drive/root/search(q='.epub')?$select=id,name,size,folder,file&$top=200`)).filter((i) => !i.isFolder);
+    const ext = kind === 'pdf' ? '.pdf' : '.epub';
+    return (await msCollect(`${GRAPH}/me/drive/root/search(q='${ext}')?$select=id,name,size,folder,file&$top=200`))
+      .filter((i) => !i.isFolder && i.name.toLowerCase().endsWith(ext));
   }
-  return gCollect("trashed=false and (mimeType='application/epub+zip' or name contains '.epub')");
+  return gCollect(`trashed=false and ${kind === 'pdf' ? G_PDF : G_EPUB}`);
 }
 
 async function listFolderReal(folderId) {
@@ -397,8 +406,7 @@ async function listFolderReal(folderId) {
     url += '?$select=id,name,size,folder,file&$top=200';
     return msCollect(url);
   }
-  const q = `'${folderId || 'root'}' in parents and trashed=false and (mimeType='application/vnd.google-apps.folder' or name contains '.epub' or mimeType='application/epub+zip')`;
-  return gCollect(q);
+  return gCollect(`'${folderId || 'root'}' in parents and trashed=false and ${G_BOOK_OR_FOLDER}`);
 }
 
 export async function search(text) {
@@ -408,7 +416,7 @@ export async function search(text) {
       .filter((i) => !i.isFolder);
   }
   const t = text.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-  return gCollect(`trashed=false and (name contains '.epub' or mimeType='application/epub+zip') and name contains '${t}'`);
+  return gCollect(`trashed=false and (${G_EPUB} or ${G_PDF}) and name contains '${t}'`);
 }
 
 async function msCollect(url) {
@@ -417,7 +425,7 @@ async function msCollect(url) {
     const j = await (await apiOk(url)).json();
     for (const it of j.value || []) {
       if (it.folder) out.push({ id: it.id, name: it.name, isFolder: true });
-      else if (isEpub(it.name, it.file?.mimeType)) out.push({ id: it.id, name: it.name, size: it.size });
+      else if (isBook(it.name, it.file?.mimeType)) out.push({ id: it.id, name: it.name, size: it.size });
     }
     url = j['@odata.nextLink'];
   }
@@ -433,7 +441,7 @@ async function gCollect(q) {
     const j = await (await apiOk(`${GDRIVE}/files?${params}`)).json();
     for (const f of j.files || []) {
       if (f.mimeType === 'application/vnd.google-apps.folder') out.push({ id: f.id, name: f.name, isFolder: true });
-      else if (isEpub(f.name, f.mimeType)) out.push({ id: f.id, name: f.name, size: Number(f.size) || 0 });
+      else if (isBook(f.name, f.mimeType)) out.push({ id: f.id, name: f.name, size: Number(f.size) || 0 });
     }
     token = j.nextPageToken;
     if (!token) break;
