@@ -8,7 +8,7 @@ import {
 } from './read-aloud.js';
 
 /* global ePub */
-const APP_VERSION = '2.0';
+const APP_VERSION = '2.1';
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Phiên bản ${APP_VERSION}`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -32,7 +32,7 @@ if (!deviceId) { deviceId = Math.random().toString(36).slice(2) + Date.now().toS
 let deviceName = lsGet('deviceName', guessDeviceName());
 
 const settings = Object.assign(
-  { fontSize: 100, lineHeight: 1.5, fontFamily: '', theme: 'light', flow: 'paginated', pageAnim: 'slide', ttsRate: 1.5, ttsVoice: '', ttsEngine: 'auto', gVoice: '', bgVoice: 'vi_VN-vais1000-medium' },
+  { fontSize: 100, lineHeight: 1.5, fontFamily: '', theme: 'light', flow: 'paginated', pageAnim: 'slide', ttsRate: 1.5, ttsVoice: '', ttsEngine: 'auto', gVoice: '', bgVoice: 'vi_VN-vais1000-medium', openVoice: 'device' },
   lsGet('settings', {}),
 );
 const saveSettings = () => lsSet('settings', settings);
@@ -409,7 +409,7 @@ async function createRendition(cfi) {
     manager: 'continuous',
     // Nạp sẵn chương kế/chương trước khi còn cách khoảng 4 màn hình (mặc định epub.js chỉ ~500px → lật
     // nhanh thì tới trang cuối chương mà chương kế chưa kịp nạp).
-    offset: Math.max(1600, window.innerWidth * 4),
+    offset: Math.min(2400, Math.max(1400, window.innerWidth * 3)),
     spread: 'auto', minSpreadWidth: 900,
     // Safari (iPhone/iPad/Mac) không chuyển sự kiện chạm/vuốt vào iframe bị sandbox thiếu "allow-scripts",
     // nên phải bật. Script trong sách vẫn bị chặn: xem sanitizeSection() (xoá <script> + CSP script-src 'none').
@@ -419,7 +419,7 @@ async function createRendition(cfi) {
   // epub.js tự đặt lại khoảng nạp sẵn = 1 trang mỗi lần sắp trang → ghi đè lại giá trị lớn hơn
   rendition.started?.then(() => {
     const m = rendition.manager;
-    const look = Math.max(1600, window.innerWidth * 4);
+    const look = Math.min(2400, Math.max(1400, window.innerWidth * 3));
     if (!m || typeof m.updateLayout !== 'function') return;
     const orig = m.updateLayout.bind(m);
     m.updateLayout = (...args) => { const r = orig(...args); m.settings.offset = look; return r; };
@@ -949,7 +949,8 @@ function chainProvider(segs, base) {
 // Chuyển việc đọc từ bộ này sang bộ kia, đọc tiếp đúng câu đang đọc (và các câu đã chuẩn bị sẵn)
 function handoff(from, to) {
   if (!from || !to || from.state === 'idle' || !from.provider) return;
-  const segs = [from.current, ...(from.ahead || []).map((i) => i.seg)];
+  // Bộ đọc phát qua luồng: câu đang phát thật sự + các câu đã chuẩn bị chưa phát
+  const segs = from.nowSeg ? [from.nowSeg(), ...from.pendingSegs()] : [from.current, ...(from.ahead || []).map((i) => i.seg)];
   const prov = chainProvider(segs, from.provider);
   const paused = from.state === 'paused';
   from.keepStream = true; // luồng âm thanh phải chạy liên tục khi chuyển giọng (nhất là lúc đã khoá màn hình)
@@ -959,7 +960,9 @@ function handoff(from, to) {
   to.start(prov);
   if (paused) to.pause();
 }
+const aiAlways = () => settings.openVoice === 'ai' && bgAiOn();
 document.addEventListener('visibilitychange', () => {
+  if (aiAlways()) return; // dùng giọng AI suốt → không đổi giọng
   if (document.hidden) {
     if (speaker === deviceSpeaker && speaker.state === 'playing' && bgAiOn()) handoff(deviceSpeaker, aiSpeaker);
   } else if (speaker === aiSpeaker && aiSpeaker.state !== 'idle' && deviceSpeaker) {
@@ -969,10 +972,11 @@ document.addEventListener('visibilitychange', () => {
 
 // Tải trước giọng AI (lần đầu) khi bắt đầu đọc to — để lúc khoá màn hình có ngay
 let aiDownloading = false;
+const aiStored = {}; // giọng AI nào đã tải về máy (kiểm tra khi mở app)
 async function prepareBackgroundVoice() {
   if (!bgAiOn() || aiDownloading) return;
   const v = settings.bgVoice;
-  if (await aiVoiceStored(v)) { aiWarmup(v).catch(() => {}); return; }
+  if (await aiVoiceStored(v)) { aiStored[v] = true; aiWarmup(v).catch(() => {}); return; }
   aiDownloading = true;
   toast(`Đang tải giọng AI (${AI_VOICES[v].size}) để đọc tiếp khi khoá màn hình…`, null, null, 4000);
   let last = 0;
@@ -982,7 +986,10 @@ async function prepareBackgroundVoice() {
       if (pct >= last + 20) { last = pct; toast(`Đang tải giọng AI… ${pct}%`, null, null, 2500); }
     });
     toast('Đã tải xong giọng AI — giờ khoá màn hình vẫn nghe tiếp được', null, null, 4000);
+    aiStored[v] = true;
     aiWarmup(v).catch(() => {});
+    // Đang chọn "giọng AI suốt" mà lúc bắt đầu chưa có giọng → chuyển sang giọng AI ngay khi tải xong
+    if (aiAlways() && speaker === deviceSpeaker && deviceSpeaker.state === 'playing') handoff(deviceSpeaker, aiSpeaker);
   } catch (e) {
     toast(`Không tải được giọng AI: ${e.message || e}`, null, null, 6000);
   } finally { aiDownloading = false; }
@@ -1140,7 +1147,8 @@ function ttsFollow(seg) {
 function ttsStart() {
   if (!(R.rendition || R.pdf)) return;
   stream.ensure(); // mở luồng âm thanh ngay trong lúc bấm nút (trình duyệt chỉ cho phép khi có thao tác chạm)
-  const next = useGoogle() ? googleSpeaker : deviceSpeaker;
+  let next = useGoogle() ? googleSpeaker : deviceSpeaker;
+  if (!useGoogle() && aiAlways() && aiStored[settings.bgVoice]) next = aiSpeaker; // giọng AI suốt
   if (!next) { toast('Trình duyệt này không hỗ trợ đọc to'); return; }
   if (speaker && speaker !== next) speaker.stop(true);
   speaker = next;
@@ -1152,7 +1160,7 @@ function ttsStart() {
     toast('Máy này chưa có giọng tiếng Việt — giọng mặc định có thể đọc sai. Chọn giọng ở Aa → Giọng đọc.', null, null, 7000);
   }
   speaker.start(R.kind === 'pdf' ? pdfProvider() : epubProvider());
-  if (speaker === deviceSpeaker) prepareBackgroundVoice();
+  if (speaker === deviceSpeaker || speaker === aiSpeaker) prepareBackgroundVoice();
 }
 function ttsUI(state, ev) {
   $('ttsBar').hidden = state === 'idle';
@@ -1191,6 +1199,7 @@ async function fillVoices() {
   $('gKeyBtn').textContent = key ? 'Đổi' : 'Nhập khoá';
   $('ttsEngineSel').value = settings.ttsEngine || 'auto';
   $('bgVoiceSel').value = settings.bgVoice || 'off';
+  $('openVoiceSel').value = settings.openVoice || 'device';
   $('ttsRateSel').value = String(settings.ttsRate);
   let html = '';
   if (key) {
@@ -1221,6 +1230,16 @@ $('ttsVoiceSel').onchange = (e) => {
   $('ttsEngineSel').value = settings.ttsEngine;
   const target = useGoogle() ? googleSpeaker : deviceSpeaker;
   if (wasPlaying && target !== speaker) { speaker.stop(true); ttsStart(); } else speaker?.refresh(true);
+};
+$('openVoiceSel').onchange = (e) => {
+  settings.openVoice = e.target.value;
+  saveSettings();
+  // Đổi ngay nếu đang đọc
+  if (aiAlways() && speaker === deviceSpeaker && deviceSpeaker.state !== 'idle') {
+    if (aiStored[settings.bgVoice]) handoff(deviceSpeaker, aiSpeaker); else prepareBackgroundVoice();
+  } else if (!aiAlways() && speaker === aiSpeaker && aiSpeaker.state !== 'idle' && deviceSpeaker && !document.hidden) {
+    handoff(aiSpeaker, deviceSpeaker);
+  }
 };
 $('bgVoiceSel').onchange = (e) => {
   settings.bgVoice = e.target.value;
@@ -1372,6 +1391,21 @@ sync.init(onUser).then(() => {
   toast('Không kết nối được dịch vụ đồng bộ — đang dùng chế độ ngoại tuyến');
 });
 
+// Biết sẵn giọng AI đã tải về máy chưa (để bấm 🔊 là dùng được ngay nếu chọn "giọng AI suốt")
+if (bgAiOn()) aiVoiceStored(settings.bgVoice).then((ok) => { if (ok) aiStored[settings.bgVoice] = true; }).catch(() => {});
+
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('sw.js').catch(() => {});
+  // Lần đầu service worker mới nhận quản lý trang → tải lại 1 lần để bật chế độ cô lập (giọng AI đa luồng)
+  // (Safari chưa hỗ trợ kiểu cô lập này → không tải lại; mỗi máy chỉ thử lại tối đa 1 lần/ngày)
+  const tryIsolate = () => {
+    if (window.crossOriginIsolated || !navigator.serviceWorker.controller || R.id) return;
+    if (/iPhone|iPad|Macintosh/.test(navigator.userAgent) && !/Chrome|Edg/.test(navigator.userAgent)) return;
+    const last = Number(lsGet('isoTried', 0)) || 0;
+    if (Date.now() - last < 24 * 3600 * 1000) return;
+    lsSet('isoTried', Date.now());
+    location.reload();
+  };
+  navigator.serviceWorker.addEventListener('controllerchange', tryIsolate);
+  setTimeout(tryIsolate, 1500);
 }
