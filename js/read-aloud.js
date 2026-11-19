@@ -251,9 +251,15 @@ export class Speaker {
 // Mỗi câu được tạo thành âm thanh (đúng tốc độ đọc ngay khi tạo → không bị méo giọng), giải mã rồi phát
 // trong luồng liền mạch ở trên → vẫn đọc tiếp khi khoá màn hình / chuyển app.
 const GTTS = 'https://texttospeech.googleapis.com/v1';
-const AHEAD = 4;      // số câu chuẩn bị trước để không bị ngắt quãng
+const AHEAD = 6;      // số câu chuẩn bị trước để không bị ngắt quãng
 const SCHEDULED = 2;  // số câu xếp lịch sẵn trong luồng âm thanh
-const GAP = 0.18;     // khoảng ngừng tự nhiên giữa 2 câu (giây)
+// Khoảng ngừng sau 1 câu (giây, ở tốc độ 1×) theo dấu câu — giống người đọc thật:
+// đoạn cắt ở dấu phẩy gần như liền, hết câu nghỉ ngắn, hết đoạn văn nghỉ lâu hơn chút.
+function gapAfter(seg, rate) {
+  const t = (seg?.text || '').trim();
+  const base = seg?.paraEnd ? 0.32 : /[.!?…。]["”’»)\]]*$/.test(t) ? 0.17 : 0.05;
+  return base / Math.sqrt(Math.max(1, rate || 1));
+}
 
 // Cắt bớt khoảng lặng ở đầu/cuối câu (giọng AI thêm sẵn ~0.2–0.4s mỗi đầu → nghe rời rạc)
 function trimSilence(buffer, keep = 0.03) {
@@ -268,7 +274,12 @@ function trimSilence(buffer, keep = 0.03) {
   if (a === 0 && b === d.length - 1) return buffer;
   const len = Math.max(1, b - a + 1);
   const res = stream.ctx.createBuffer(buffer.numberOfChannels, len, buffer.sampleRate);
-  for (let c = 0; c < buffer.numberOfChannels; c++) res.getChannelData(c).set(buffer.getChannelData(c).subarray(a, a + len));
+  const fade = Math.min(Math.round(buffer.sampleRate * 0.005), len >> 2); // 5 ms vào/ra → không nghe tiếng "tách"
+  for (let c = 0; c < buffer.numberOfChannels; c++) {
+    const ch = res.getChannelData(c);
+    ch.set(buffer.getChannelData(c).subarray(a, a + len));
+    for (let i = 0; i < fade; i++) { const g = i / fade; ch[i] *= g; ch[len - 1 - i] *= g; }
+  }
   return res;
 }
 
@@ -371,7 +382,8 @@ export class CloudSpeaker extends Speaker {
       }
       this.errors = 0;
       const buf = trimSilence(item.buffer);
-      const at = Math.max(ctx.currentTime + 0.05, this.queueTime + (this.queueTime ? GAP : 0));
+      const at = Math.max(ctx.currentTime + 0.05, this.queueTime + (this.queueTime ? gapAfter(this.lastSeg, this.getRate()) : 0));
+      this.lastSeg = item.seg;
       const entry = { seg: item.seg, at, end: at + buf.duration };
       entry.src = stream.playAt(buf, at, () => {
         if (gen !== this.gen) return;
@@ -449,6 +461,7 @@ export class CloudSpeaker extends Speaker {
     this.ahead = [];
     this.sched = [];
     this.queueTime = 0;
+    this.lastSeg = null;
     if (!this.keepStream) stream.suspend();
     this.unlockScreen();
     if (!silent && was !== 'idle') this.emit('stop');
