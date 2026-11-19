@@ -57,8 +57,27 @@ export function splitSentences(text, max = 220) {
   return out;
 }
 
+// Âm thanh "im lặng" phát lặp trong lúc đọc to: Android coi app như đang phát nhạc nên không đóng băng
+// trang khi khoá màn hình / chuyển app → giọng đọc vẫn đọc tiếp các câu sau. Tín hiệu cực nhỏ (≈ -90 dB),
+// tai người không nghe thấy, nhưng không phải số 0 tuyệt đối (để hệ thống tính là "đang phát âm thanh").
+let keepAliveUrl = null;
+function keepAliveSrc() {
+  if (keepAliveUrl) return keepAliveUrl;
+  const rate = 8000, n = rate * 2; // 2 giây
+  const buf = new ArrayBuffer(44 + n * 2);
+  const v = new DataView(buf);
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, 'data'); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, i % 2 ? 1 : -1, true);
+  keepAliveUrl = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+  return keepAliveUrl;
+}
+
 export class Speaker {
-  // opts: { getRate(), getVoiceURI(), onSegment(seg), onState(state, event) }
+  // opts: { getRate(), getVoiceURI(), onSegment(seg), onState(state, event), getMeta() → {title, artist, album, artwork} }
   constructor(opts) {
     Object.assign(this, opts);
     this.state = 'idle'; // idle | playing | paused
@@ -70,9 +89,51 @@ export class Speaker {
     this.stop(true);
     this.provider = provider;
     this.state = 'playing';
+    this.keepAlive(true); // phải gọi ngay trong lúc người dùng bấm nút (trình duyệt mới cho phát âm thanh)
+    this.setupMediaSession();
     this.lockScreen();
     this.emit();
     await this.advance(++this.gen);
+  }
+
+  keepAlive(on) {
+    try {
+      if (!on) { this.audio?.pause(); return; }
+      if (!this.audio) {
+        this.audio = new Audio(keepAliveSrc());
+        this.audio.loop = true;
+        this.audio.setAttribute('playsinline', '');
+      }
+      this.audio.play().catch(() => {});
+    } catch { /* bỏ qua */ }
+  }
+
+  // Điều khiển trên màn hình khoá / thanh thông báo (Android): Phát, Tạm dừng, Dừng
+  setupMediaSession() {
+    const ms = navigator.mediaSession;
+    if (!ms) return;
+    try {
+      const m = this.getMeta?.() || {};
+      if (window.MediaMetadata) {
+        ms.metadata = new MediaMetadata({
+          title: m.title || 'Đọc EPUB', artist: m.artist || '', album: m.album || '',
+          artwork: m.artwork ? [{ src: m.artwork, sizes: '512x512' }] : [{ src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' }],
+        });
+      }
+      if (!this.msBound) {
+        this.msBound = true;
+        const set = (a, fn) => { try { ms.setActionHandler(a, fn); } catch { /* không hỗ trợ */ } };
+        set('play', () => this.resume());
+        set('pause', () => this.pause());
+        set('stop', () => this.stop());
+      }
+      ms.playbackState = 'playing';
+    } catch { /* bỏ qua */ }
+  }
+  updateMediaState() {
+    try {
+      if (navigator.mediaSession) navigator.mediaSession.playbackState = this.state === 'playing' ? 'playing' : this.state === 'paused' ? 'paused' : 'none';
+    } catch { /* bỏ qua */ }
   }
 
   async advance(gen) {
@@ -109,6 +170,7 @@ export class Speaker {
     this.state = 'paused';
     this.gen++;
     speechSynthesis.cancel();
+    this.keepAlive(false);
     this.unlockScreen();
     this.emit();
   }
@@ -117,6 +179,7 @@ export class Speaker {
     if (this.state !== 'paused') return;
     this.state = 'playing';
     const gen = ++this.gen;
+    this.keepAlive(true);
     this.lockScreen();
     this.emit();
     if (this.current) this.speak(this.current, gen); else this.advance(gen);
@@ -136,18 +199,21 @@ export class Speaker {
     this.state = 'idle';
     this.current = null;
     if (ttsSupported) speechSynthesis.cancel();
+    this.keepAlive(false);
     this.unlockScreen();
     if (!silent && was !== 'idle') this.emit('stop');
+    else this.updateMediaState();
   }
 
   finish() {
     this.state = 'idle';
     this.current = null;
+    this.keepAlive(false);
     this.unlockScreen();
     this.emit('end');
   }
 
-  emit(ev) { this.onState?.(this.state, ev); }
+  emit(ev) { this.updateMediaState(); this.onState?.(this.state, ev); }
 
   async lockScreen() {
     try { if (!this.wake && navigator.wakeLock) this.wake = await navigator.wakeLock.request('screen'); } catch { /* không hỗ trợ */ }
