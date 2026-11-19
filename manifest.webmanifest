@@ -1,7 +1,8 @@
 {
-  "name": "Đọc EPUB",
-  "short_name": "Đọc EPUB",
-  "description": "Đọc sách EPUB và đồng bộ trang đang đọc giữa Android, iPhone/iPad và Mac",
+  "name": "Tree Ebook",
+  "short_name": "Tree Ebook",
+  "description": "Tree Ebook của Trình Đỗ — đọc sách EPUB/PDF, nghe đọc to và đồng bộ đúng câu đang đọc giữa Android, iPhone/iPad và Mac",
+  "id": "./",
   "lang": "vi",
   "start_url": "./",
   "scope": "./",
