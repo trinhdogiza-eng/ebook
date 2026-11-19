@@ -1,6 +1,7 @@
 import * as db from './db.js';
 import * as sync from './sync.js';
 import { PdfReader, openPdf, pdfInfo, isPdfBuffer } from './pdf-reader.js';
+import { kindleToEpub, isKindleBuffer, KINDLE_EXT, KINDLE_MIME } from './mobi-convert.js';
 import {
   Speaker, CloudSpeaker, ttsSupported, voices, isVietnamese, pickVoice, unlockSpeech, splitSentences,
   googleVoices, GOOGLE_DEFAULT_VOICE, AiSpeaker, AI_VOICES, AI_DEFAULT_VOICE, aiDownload, aiVoiceStored,
@@ -8,7 +9,7 @@ import {
 } from './read-aloud.js';
 
 /* global ePub */
-const APP_VERSION = '2.4';
+const APP_VERSION = '2.5';
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -147,7 +148,8 @@ async function downloadAndOpen(fileId, name, expectedId) {
   try {
     toast(`Đang tải “${name}”…`, null, null, 0);
     const buf = await sync.download(fileId);
-    const fileName = /\.(epub|pdf)$/i.test(name) ? name : `${name}${isPdfBuffer(buf) ? '.pdf' : '.epub'}`;
+    const fileName = /\.(epub|pdf)$/i.test(name) || KINDLE_EXT.test(name) ? name
+      : `${name}${isPdfBuffer(buf) ? '.pdf' : isKindleBuffer(buf) ? '.mobi' : '.epub'}`;
     const { id } = await importBuffer(buf, fileName, { provider: sync.currentUser().provider, id: fileId });
     hideToast();
     if (expectedId && id !== expectedId) toast('Tệp trên đám mây đã thay đổi so với lúc đọc — sẽ mở như sách mới');
@@ -229,6 +231,14 @@ async function importBuffer(buf, fileName, source) {
     sync.push(id, { title, author, ...(source ? { source } : {}) }).catch(() => {});
     return { id, isNew: true };
   }
+  // Sách Kindle (MOBI/AZW3/PRC): chuyển sang EPUB rồi xử lý như EPUB.
+  // Mã sách (id) vẫn băm từ tệp gốc để cùng một tệp trên mọi thiết bị luôn khớp nhau.
+  let origFormat = null;
+  if (isKindleBuffer(buf)) {
+    toast(`Đang chuyển “${fileName}” sang EPUB…`, null, null, 0);
+    origFormat = (fileName.match(KINDLE_EXT)?.[1] || 'mobi').toLowerCase();
+    ({ epub: buf } = await kindleToEpub(buf, fileName));
+  }
   const book = ePub(buf.slice(0));
   await book.ready;
   const meta = await book.loaded.metadata;
@@ -238,10 +248,13 @@ async function importBuffer(buf, fileName, source) {
     if (url) cover = await (await fetch(url)).blob();
   } catch { /* sách không có bìa */ }
   book.destroy();
-  const title = (meta.title || fileName.replace(/\.epub$/i, '')).trim();
+  const title = (meta.title || fileName.replace(/\.epub$/i, '').replace(KINDLE_EXT, '')).trim();
   const author = (meta.creator || '').trim();
   await db.put('files', { id, data: buf });
-  await db.put('books', { id, title, author, cover, addedAt: Date.now(), fileName, size: buf.byteLength, ...(source ? { source } : {}) });
+  await db.put('books', {
+    id, title, author, cover, addedAt: Date.now(), fileName, size: buf.byteLength,
+    ...(origFormat ? { origFormat } : {}), ...(source ? { source } : {}),
+  });
   sync.push(id, { title, author, ...(source ? { source } : {}) }).catch(() => {});
   return { id, isNew: true };
 }
@@ -249,8 +262,9 @@ async function importBuffer(buf, fileName, source) {
 async function importFiles(files) {
   let added = 0;
   for (const file of files) {
-    if (!/\.(epub|pdf)$/i.test(file.name) && !['application/epub+zip', 'application/pdf'].includes(file.type)) {
-      toast(`Bỏ qua “${file.name}” — không phải tệp EPUB hoặc PDF`); continue;
+    if (!/\.(epub|pdf)$/i.test(file.name) && !KINDLE_EXT.test(file.name)
+      && !['application/epub+zip', 'application/pdf', ...KINDLE_MIME].includes(file.type)) {
+      toast(`Bỏ qua “${file.name}” — không phải tệp EPUB, PDF, MOBI, AZW3 hoặc PRC`); continue;
     }
     try {
       toast(`Đang thêm “${file.name}”…`, null, null, 0);
@@ -266,6 +280,10 @@ async function importFiles(files) {
 }
 
 $('fileInput').onchange = (e) => { importFiles([...e.target.files]); e.target.value = ''; };
+// iPhone/iPad làm mờ các đuôi tệp lạ (.azw3, .mobi…) nếu giữ "accept" → bỏ đi, importFiles tự lọc
+if (/iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) {
+  $('fileInput').removeAttribute('accept');
+}
 
 // Kéo thả tệp (Mac / máy tính)
 let dragDepth = 0;

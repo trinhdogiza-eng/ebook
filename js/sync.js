@@ -378,25 +378,30 @@ function startPolling() {
 }
 
 /* ---------- duyệt & tải sách từ đám mây ---------- */
-// Sách đọc được: EPUB và PDF
-const isBook = (name, mime) => /\.(epub|pdf)$/i.test(name || '') || mime === 'application/epub+zip' || mime === 'application/pdf';
+// Sách đọc được: EPUB, PDF và sách Kindle (MOBI, AZW3, AZW, PRC — được chuyển sang EPUB khi mở)
+const BOOK_MIMES = ['application/epub+zip', 'application/pdf', 'application/x-mobipocket-ebook', 'application/vnd.amazon.ebook'];
+const isBook = (name, mime) => /\.(epub|pdf|mobi|azw3|azw|prc)$/i.test(name || '') || BOOK_MIMES.includes(mime);
 const G_EPUB = "(mimeType='application/epub+zip' or name contains '.epub')";
 const G_PDF = "(mimeType='application/pdf' or name contains '.pdf')";
-const G_BOOK_OR_FOLDER = `(mimeType='application/vnd.google-apps.folder' or ${G_EPUB} or ${G_PDF})`;
+const G_KINDLE = "(name contains '.mobi' or name contains '.azw3' or name contains '.azw' or name contains '.prc' or mimeType='application/x-mobipocket-ebook')";
+const G_BOOK_OR_FOLDER = `(mimeType='application/vnd.google-apps.folder' or ${G_EPUB} or ${G_PDF} or ${G_KINDLE})`;
 
 // Trả về [{ id, name, isFolder, size }]
 // Thư mục ảo ở cấp gốc: "Tất cả sách EPUB", "Tất cả PDF" và (Google Drive) "Được chia sẻ với tôi"
 export const ALL_EPUBS = '__all';
 export const ALL_PDFS = '__allpdf';
+export const ALL_KINDLE = '__allkindle';
 export const SHARED = '__shared';
 
 export async function listFolder(folderId) {
   if (folderId === ALL_EPUBS) return allOfKind('epub');
   if (folderId === ALL_PDFS) return allOfKind('pdf');
+  if (folderId === ALL_KINDLE) return allOfKind('kindle');
   if (!folderId) {
     const virtual = [
       { id: ALL_EPUBS, name: 'Tất cả sách EPUB', isFolder: true, icon: '📚' },
       { id: ALL_PDFS, name: 'Tất cả PDF', isFolder: true, icon: '📄' },
+      { id: ALL_KINDLE, name: 'Tất cả sách Kindle (MOBI, AZW3, PRC)', isFolder: true, icon: '📙' },
     ];
     if (session.provider === 'gdrive') virtual.push({ id: SHARED, name: 'Được chia sẻ với tôi', isFolder: true, icon: '👥' });
     return [...virtual, ...(await listFolderReal(null))];
@@ -406,6 +411,13 @@ export async function listFolder(folderId) {
 }
 
 async function allOfKind(kind) {
+  if (session.provider === 'onedrive' && kind === 'kindle') {
+    const exts = ['.mobi', '.azw3', '.azw', '.prc'];
+    const seen = new Set();
+    const lists = await Promise.all(exts.map((e) => msCollect(`${GRAPH}/me/drive/root/search(q='${e}')?$select=id,name,size,folder,file&$top=200`)));
+    return sortItems(lists.flat().filter((i) => !i.isFolder && exts.some((e) => i.name.toLowerCase().endsWith(e)) && !seen.has(i.id) && seen.add(i.id)));
+  }
+  if (kind === 'kindle') return gCollect(`trashed=false and ${G_KINDLE}`);
   if (session.provider === 'onedrive') {
     const ext = kind === 'pdf' ? '.pdf' : '.epub';
     return (await msCollect(`${GRAPH}/me/drive/root/search(q='${ext}')?$select=id,name,size,folder,file&$top=200`))
@@ -430,7 +442,7 @@ export async function search(text) {
       .filter((i) => !i.isFolder);
   }
   const t = text.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-  return gCollect(`trashed=false and (${G_EPUB} or ${G_PDF}) and name contains '${t}'`);
+  return gCollect(`trashed=false and (${G_EPUB} or ${G_PDF} or ${G_KINDLE}) and name contains '${t}'`);
 }
 
 async function msCollect(url) {

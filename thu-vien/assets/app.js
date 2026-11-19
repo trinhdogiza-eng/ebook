@@ -128,9 +128,10 @@
     return listPage(catName(id), BOOKS.filter((b) => b.category === id), "Thể loại › " + catName(id)).replace('<div class="toolbar">', chips + '<div class="toolbar">');
   }
 
-  // Link mở sách trong app Tree Ebook (cần file EPUB/PDF thật trên cùng trang web)
+  // Link mở sách trong app Tree Ebook (cần file EPUB/MOBI/AZW3/PDF thật trên cùng trang web)
   function treeLink(b) {
-    const f = (b.files || {}).epub || (b.files || {}).pdf;
+    const fl = b.files || {};
+    const f = fl.epub || fl.azw3 || fl.mobi || fl.pdf;
     if (!window.READER_URL || !f || location.protocol === "file:") return "";
     const file = new URL(f, location.href).pathname;
     return new URL(window.READER_URL, location.href).href.split("#")[0].split("?")[0] + "?mo=" + encodeURIComponent(file);

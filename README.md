@@ -93,3 +93,9 @@ tools/              máy chủ chạy thử, sách mẫu, trang kiểm thử
 - Mở sách thẳng bằng đường link: `…/ebook/?mo=thu-vien/files/ten-sach.epub` (chỉ nhận tệp EPUB/PDF nằm trên cùng trang web). App tải tệp, thêm vào thư viện (không trùng nếu đã có) rồi mở luôn.
 - Trang thư viện **Thư Quán** nằm ở `publish/thu-vien/` → trên mạng là `…/ebook/thu-vien/`. Mỗi sách có `files.epub` sẽ có nút **📖 Đọc bằng Tree Ebook**.
 - Mã nguồn Thư Quán gốc: `WORKS/Web/ebook/`. Sửa ở đó xong chép lại vào `publish/thu-vien/`.
+
+## Đọc sách Kindle: MOBI, AZW3, AZW, PRC (từ v2.5)
+- Thêm tệp `.mobi` / `.azw3` / `.azw` / `.prc` như sách thường (nút **+ Thêm sách**, kéo thả, mở từ OneDrive/Google Drive — có thư mục ảo *Tất cả sách Kindle*).
+- App tự chuyển sang EPUB ngay trên máy ([js/mobi-convert.js](js/mobi-convert.js), dùng `mobi.js` của foliate-js — MIT) rồi mở như EPUB: mục lục, đọc to, đồng bộ trang đều dùng được. Mã sách vẫn băm từ tệp gốc nên cùng một tệp trên các máy luôn khớp nhau.
+- Lần đầu cần mạng để tải thư viện (sau đó được lưu sẵn để dùng ngoại tuyến).
+- Không đọc được: sách có **DRM** (mua trên Amazon Kindle) và tệp PRC dạng PalmDoc rất cũ.
