@@ -8,9 +8,9 @@ import {
 } from './read-aloud.js';
 
 /* global ePub */
-const APP_VERSION = '2.2';
+const APP_VERSION = '2.3';
 const $ = (id) => document.getElementById(id);
-$('appVersion').textContent = `Phiên bản ${APP_VERSION}`;
+$('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const pctText = (p) => `${Math.round((p || 0) * 100)}%`;
 
@@ -39,7 +39,7 @@ const saveSettings = () => lsSet('settings', settings);
 document.body.dataset.theme = settings.theme;
 
 const THEMES = {
-  light: { bg: '#ffffff', fg: '#1f1d1a', link: '#b5532c', bar: '#f7f4ee' },
+  light: { bg: '#ffffff', fg: '#1f1d1a', link: '#b5532c', bar: '#ffffff' },
   sepia: { bg: '#f4ecd8', fg: '#3b2f22', link: '#9c4a1f', bar: '#f4ecd8' },
   dark: { bg: '#161514', fg: '#d9d3c7', link: '#e08a5e', bar: '#161514' },
 };
@@ -496,7 +496,8 @@ function injectStyle(contents) {
     html { font-size: ${settings.fontSize}% !important; background: ${t.bg} !important; touch-action: ${settings.flow === 'paginated' ? 'none' : 'pan-y'}; -webkit-tap-highlight-color: transparent; }
     body { font-size: ${bodyFs}px !important; background: ${t.bg} !important; color: ${t.fg} !important; -webkit-text-size-adjust: none; }
     p, li, blockquote, dd, dt, td, div { line-height: ${settings.lineHeight} !important; }
-    ${recolor ? `body *:not(img):not(svg):not(image) { color: inherit !important; background-color: transparent !important; border-color: ${t.fg}33 !important; }` : ''}
+    body *:not(img):not(svg):not(image) { background-color: transparent !important; background-image: none !important; }
+    ${recolor ? `body *:not(img):not(svg):not(image) { color: inherit !important; border-color: ${t.fg}33 !important; }` : ''}
     a, a * { color: ${t.link} !important; }
     ::highlight(resume) { background-color: ${settings.theme === 'dark' ? 'rgba(110,170,255,.35)' : 'rgba(80,150,255,.28)'}; }
     ::highlight(tts) { background-color: ${settings.theme === 'dark' ? 'rgba(224,138,94,.38)' : 'rgba(255,196,0,.38)'}; }
@@ -511,6 +512,9 @@ function applyChrome() {
   const t = THEMES[settings.theme];
   document.querySelector('meta[name="theme-color"]').content = t.bar;
   $('viewerWrap').style.background = t.bg;
+  // Cả khu đọc (thanh trên/dưới, lề, vùng chữ) dùng đúng 1 màu nền → không còn chỗ đậm chỗ nhạt
+  $('reader').style.setProperty('--bg', t.bg);
+  $('reader').style.background = t.bg;
   $('fontSizeVal').textContent = R.kind === 'pdf' && R.pdf ? `${Math.round(R.pdf.zoom * 100)}%` : `${settings.fontSize}%`;
   $('lhVal').textContent = settings.lineHeight.toFixed(1);
   $('fontFamily').value = settings.fontFamily;
@@ -707,6 +711,7 @@ async function closeBook() {
   if (R.pdf) R.pdf.destroy();
   Object.assign(R, { id: null, book: null, rendition: null, pdf: null, kind: null, line: null });
   $('reader').classList.remove('is-pdf');
+  document.querySelector('meta[name="theme-color"]').content = getComputedStyle(document.body).getPropertyValue('--bg').trim() || '#f7f4ee';
   $('tocPanel').hidden = true; $('settingsPanel').hidden = true;
   showView('library');
   renderLibrary();
