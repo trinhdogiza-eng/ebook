@@ -152,6 +152,21 @@ code { font-size: .9em; background: var(--line); padding: 1px 5px; border-radius
 @media (pointer: coarse) { #reader.paginated .tapzone { display: block; } }
 .version { padding: 12px 16px; margin: 0; }
 
+/* ---------- Đọc to ---------- */
+.tts-btn { font-size: 18px; }
+.tts-btn.on { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.tts-bar {
+  position: absolute; left: 50%; transform: translateX(-50%); z-index: 8;
+  bottom: calc(64px + var(--safe-bottom));
+  display: flex; align-items: center; gap: 4px; padding: 4px 6px 4px 14px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 999px; box-shadow: var(--shadow);
+  white-space: nowrap;
+}
+.tts-bar[hidden] { display: none; }
+.tts-bar .tts-label { font-size: 13px; color: var(--muted); margin-right: 4px; }
+.tts-bar .chip.small { padding: 4px 10px; font-size: 14px; font-weight: 600; max-width: none; }
+#reader.immersive .tts-bar { bottom: calc(16px + var(--safe-bottom)); }
+
 /* ---------- PDF ---------- */
 #reader.is-pdf .tapzone, #reader.is-pdf .epub-only { display: none !important; }
 .pdf-stage {
