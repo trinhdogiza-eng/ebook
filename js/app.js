@@ -1,8 +1,9 @@
 import * as db from './db.js';
 import * as sync from './sync.js';
+import { PdfReader, openPdf, pdfInfo, isPdfBuffer } from './pdf-reader.js';
 
 /* global ePub */
-const APP_VERSION = '1.5';
+const APP_VERSION = '1.6';
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Phiên bản ${APP_VERSION}`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -95,7 +96,7 @@ async function renderLibrary() {
     let coverHtml = `<div class="ph">${esc(b.title)}</div>`;
     if (b.cover) { const u = URL.createObjectURL(b.cover); coverUrls.push(u); coverHtml = `<img src="${u}" alt="">`; }
     el.innerHTML = `
-      <div class="cover">${coverHtml}</div>
+      <div class="cover">${coverHtml}${b.format === 'pdf' ? '<span class="badge">PDF</span>' : ''}</div>
       <button class="del" title="Xoá khỏi máy này" aria-label="Xoá">✕</button>
       <div class="meta">
         <div class="t">${esc(b.title)}</div>
@@ -141,7 +142,7 @@ async function downloadAndOpen(fileId, name, expectedId) {
   try {
     toast(`Đang tải “${name}”…`, null, null, 0);
     const buf = await sync.download(fileId);
-    const fileName = /\.epub$/i.test(name) ? name : `${name}.epub`;
+    const fileName = /\.(epub|pdf)$/i.test(name) ? name : `${name}${isPdfBuffer(buf) ? '.pdf' : '.epub'}`;
     const { id } = await importBuffer(buf, fileName, { provider: sync.currentUser().provider, id: fileId });
     hideToast();
     if (expectedId && id !== expectedId) toast('Tệp trên đám mây đã thay đổi so với lúc đọc — sẽ mở như sách mới');
@@ -169,13 +170,13 @@ async function loadCloudItems(loader) {
   try {
     const [items, books] = await Promise.all([loader(), db.all('books')]);
     const have = new Set(books.map((b) => b.source?.id).filter(Boolean));
-    $('cloudStatus').textContent = items.length ? '' : 'Không có thư mục con hay tệp EPUB nào ở đây.';
+    $('cloudStatus').textContent = items.length ? '' : 'Không có thư mục con hay tệp EPUB/PDF nào ở đây.';
     for (const it of items) {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = `cloud-item${have.has(it.id) ? ' have' : ''}`;
       const size = it.isFolder ? '' : have.has(it.id) ? 'Đã có' : `${(it.size / 1048576).toFixed(1)} MB`;
-      b.innerHTML = `<span class="ic">${it.icon || (it.isFolder ? '📁' : '📖')}</span><span class="nm">${esc(it.name)}</span><span class="sz">${size}</span>`;
+      b.innerHTML = `<span class="ic">${it.icon || (it.isFolder ? '📁' : /\.pdf$/i.test(it.name) ? '📄' : '📖')}</span><span class="nm">${esc(it.name)}</span><span class="sz">${size}</span>`;
       b.onclick = it.isFolder
         ? () => { cloudNav.stack.push({ id: it.id, name: it.name }); $('cloudSearch').value = ''; showCloudFolder(); }
         : () => downloadAndOpen(it.id, it.name);
@@ -203,13 +204,25 @@ $('cloudSearchForm').onsubmit = (e) => {
   loadCloudItems(() => sync.search(q));
 };
 
-// Thêm một tệp EPUB (từ máy hoặc từ đám mây) vào thư viện. Trả về { id, isNew }.
+// Thêm một tệp EPUB/PDF (từ máy hoặc từ đám mây) vào thư viện. Trả về { id, isNew }.
 async function importBuffer(buf, fileName, source) {
   const id = hashBuffer(buf);
   const existing = await db.get('books', id);
   if (existing) {
     if (source && !existing.source) await db.put('books', { ...existing, source });
     return { id, isNew: false };
+  }
+  if (isPdfBuffer(buf)) {
+    const info = await pdfInfo(buf);
+    const title = info.title || fileName.replace(/\.pdf$/i, '').trim();
+    const author = info.author;
+    await db.put('files', { id, data: buf });
+    await db.put('books', {
+      id, title, author, cover: info.cover, format: 'pdf', pages: info.pages,
+      addedAt: Date.now(), fileName, size: buf.byteLength, ...(source ? { source } : {}),
+    });
+    sync.push(id, { title, author, ...(source ? { source } : {}) }).catch(() => {});
+    return { id, isNew: true };
   }
   const book = ePub(buf.slice(0));
   await book.ready;
@@ -231,8 +244,8 @@ async function importBuffer(buf, fileName, source) {
 async function importFiles(files) {
   let added = 0;
   for (const file of files) {
-    if (!/\.epub$/i.test(file.name) && file.type !== 'application/epub+zip') {
-      toast(`Bỏ qua “${file.name}” — không phải tệp EPUB`); continue;
+    if (!/\.(epub|pdf)$/i.test(file.name) && !['application/epub+zip', 'application/pdf'].includes(file.type)) {
+      toast(`Bỏ qua “${file.name}” — không phải tệp EPUB hoặc PDF`); continue;
     }
     try {
       toast(`Đang thêm “${file.name}”…`, null, null, 0);
@@ -267,6 +280,8 @@ const R = {
   unwatch: () => {}, pushTimer: null, pendingPush: null,
 };
 
+if (location.hostname === 'localhost') window.__R = R; // chỉ để kiểm thử trên máy (không có trên trang web thật)
+
 function showView(name) {
   for (const v of document.querySelectorAll('.view')) v.classList.toggle('active', v.id === name);
 }
@@ -275,19 +290,25 @@ async function openBook(id) {
   const [file, meta, local] = await Promise.all([db.get('files', id), db.get('books', id), db.get('progress', id)]);
   if (!file) { toast('Không tìm thấy tệp sách trên máy này'); return; }
   Object.assign(R, { id, meta, cfi: null, percent: local?.percent || 0, toc: [], flatToc: [] });
+  R.kind = meta.format === 'pdf' ? 'pdf' : 'epub';
   showView('reader');
   $('reader').classList.remove('immersive');
+  $('reader').classList.toggle('is-pdf', R.kind === 'pdf');
+  $('fontLabel').textContent = R.kind === 'pdf' ? 'Phóng to' : 'Cỡ chữ';
   $('rTitle').textContent = meta.title;
   $('rChapter').textContent = meta.author || '';
   $('progressText').textContent = 'Đang mở…';
   $('syncText').textContent = '';
   $('progressSlider').disabled = true;
+  renderToc();
 
-  R.book = ePub(file.data);
-  // Chạy sau hook thay thế tài nguyên của epub.js (hook đó ghi đè section.output từ bản gốc), nên đợi 1 microtask.
-  R.book.spine.hooks.serialize.register((output, section) =>
-    Promise.resolve().then(() => { section.output = sanitizeSection(section.output); }));
-  R.book.loaded.navigation.then((nav) => { R.toc = nav.toc; R.flatToc = flatten(nav.toc); renderToc(); }).catch(() => {});
+  if (R.kind === 'epub') {
+    R.book = ePub(file.data);
+    // Chạy sau hook thay thế tài nguyên của epub.js (hook đó ghi đè section.output từ bản gốc), nên đợi 1 microtask.
+    R.book.spine.hooks.serialize.register((output, section) =>
+      Promise.resolve().then(() => { section.output = sanitizeSection(section.output); }));
+    R.book.loaded.navigation.then((nav) => { R.toc = nav.toc; R.flatToc = flatten(nav.toc); renderToc(); }).catch(() => {});
+  }
 
   // Chọn vị trí bắt đầu: bản mới nhất giữa máy này và đám mây
   let remote = null;
@@ -303,12 +324,70 @@ async function openBook(id) {
   }
   R.lastSavedAt = Math.max(local?.updatedAt || 0, remote?.updatedAt || 0);
 
-  await createRendition(start);
+  if (R.kind === 'pdf') { if (!(await openPdfReader(file.data, start))) return; }
+  else await createRendition(start);
   if (fromOther) toast(`Đã chuyển đến vị trí bạn đọc trên ${fromOther}`, null, null, 3500);
   updateSyncText();
 
   R.unwatch = sync.watchOne(id, onRemoteChange);
-  loadLocations(id);
+  if (R.kind === 'epub') loadLocations(id);
+}
+
+/* ----- PDF ----- */
+// Vị trí trong PDF được lưu/đồng bộ dạng "page:<số trang>" (cùng trường với CFI của EPUB)
+const pageOf = (cfi) => { const m = /^page:(\d+)/.exec(cfi || ''); return m ? Number(m[1]) : 1; };
+
+async function openPdfReader(data, startCfi) {
+  $('viewer').innerHTML = '';
+  let doc;
+  try {
+    doc = await openPdf(data);
+  } catch (e) {
+    console.error(e);
+    toast(`Không mở được PDF: ${e.message || e}`);
+    closeBook();
+    return false;
+  }
+  R.skipNextSave = true; // lần hiển thị đầu không tính là "đọc tiếp"
+  R.pdf = new PdfReader({
+    container: $('viewer'),
+    doc,
+    getSettings: () => settings,
+    onLocation: onPdfLocation,
+    onTap: (x) => tapAt(x),
+    onZoom: (z) => {
+      $('fontSizeVal').textContent = `${Math.round(z * 100)}%`;
+      toast(`Phóng to ${Math.round(z * 100)}%`, null, null, 1000);
+    },
+  });
+  applyChrome();
+  R.pdf.outline().then((items) => {
+    R.flatToc = items;
+    renderToc();
+    if (R.pdf) onPdfLocation(R.pdf.page, R.pdf.pages, true);
+  }).catch(() => {});
+  await R.pdf.start(pageOf(startCfi));
+  $('progressSlider').disabled = false;
+  return true;
+}
+
+function onPdfLocation(page, pages, labelOnly) {
+  R.cfi = `page:${page}`;
+  R.percent = pages > 1 ? (page - 1) / (pages - 1) : 1;
+  // Mục lục: mục có số trang lớn nhất mà không vượt quá trang hiện tại
+  let ch = null;
+  for (const t of R.flatToc) if (t.page <= page && (!ch || t.page >= ch.page)) ch = t;
+  $('rChapter').textContent = ch?.label || `Trang ${page}/${pages}`;
+  document.querySelectorAll('#tocList a').forEach((a, i) => a.classList.toggle('current', R.flatToc[i] === ch));
+  updateProgressUI();
+  if (labelOnly) return;
+  if (R.skipNextSave) { R.skipNextSave = false; return; }
+  saveProgress(ch?.label || `Trang ${page}`);
+}
+
+function goToLocation(cfi) {
+  if (R.kind === 'pdf') R.pdf?.goTo(pageOf(cfi));
+  else R.rendition?.display(cfi);
 }
 
 async function createRendition(cfi) {
@@ -400,7 +479,7 @@ function applyChrome() {
   const t = THEMES[settings.theme];
   document.querySelector('meta[name="theme-color"]').content = t.bar;
   $('viewerWrap').style.background = t.bg;
-  $('fontSizeVal').textContent = `${settings.fontSize}%`;
+  $('fontSizeVal').textContent = R.kind === 'pdf' && R.pdf ? `${Math.round(R.pdf.zoom * 100)}%` : `${settings.fontSize}%`;
   $('lhVal').textContent = settings.lineHeight.toFixed(1);
   $('fontFamily').value = settings.fontFamily;
   $('flowMode').value = settings.flow;
@@ -415,6 +494,7 @@ function changeSetting(patch) {
   Object.assign(settings, patch);
   saveSettings();
   applyChrome();
+  if (R.kind === 'pdf') { if (R.pdf && ('flow' in patch || 'theme' in patch)) R.pdf.rebuild(); return; }
   if (!R.rendition) return;
   clearTimeout(rerenderTimer);
   rerenderTimer = setTimeout(() => createRendition(R.cfi), 250);
@@ -443,7 +523,11 @@ function renderToc() {
     a.href = '#';
     a.textContent = t.label || '(không tên)';
     if (t.level > 1) a.className = `sub-item${t.level > 2 ? ' l3' : ''}`;
-    a.onclick = (e) => { e.preventDefault(); $('tocPanel').hidden = true; R.rendition.display(t.href); };
+    a.onclick = (e) => {
+      e.preventDefault();
+      $('tocPanel').hidden = true;
+      if (R.kind === 'pdf') R.pdf?.goTo(t.page); else R.rendition.display(t.href);
+    };
     nav.appendChild(a);
   }
 }
@@ -485,7 +569,9 @@ function onRelocated(loc) {
 }
 
 function updateProgressUI() {
-  $('progressText').textContent = pctText(R.percent);
+  $('progressText').textContent = R.kind === 'pdf' && R.pdf
+    ? `Trang ${R.pdf.page}/${R.pdf.pages} · ${pctText(R.percent)}`
+    : pctText(R.percent);
   if (document.activeElement !== $('progressSlider')) $('progressSlider').value = Math.round(R.percent * 1000);
 }
 
@@ -534,7 +620,7 @@ function onRemoteChange(data) {
   R.lastSavedAt = data.updatedAt;
   toast(`${data.deviceName || 'Thiết bị khác'} đã đọc đến ${pctText(data.percent)}`, 'Chuyển đến', () => {
     R.skipNextSave = false;
-    R.rendition.display(data.cfi);
+    goToLocation(data.cfi);
   }, 15000);
 }
 
@@ -544,7 +630,9 @@ async function closeBook() {
   clearTimeout(rerenderTimer);
   if (R.rendition) R.rendition.destroy();
   if (R.book) R.book.destroy();
-  Object.assign(R, { id: null, book: null, rendition: null });
+  if (R.pdf) R.pdf.destroy();
+  Object.assign(R, { id: null, book: null, rendition: null, pdf: null, kind: null });
+  $('reader').classList.remove('is-pdf');
   $('tocPanel').hidden = true; $('settingsPanel').hidden = true;
   showView('library');
   renderLibrary();
@@ -597,6 +685,7 @@ function slideIn(dir) {
 
 // dir = 1: trang sau, -1: trang trước. fromScroll: vị trí trang lúc bắt đầu kéo; shift: độ lệch hiện tại do kéo.
 async function turn(dir, fromScroll, shift = 0) {
+  if (R.kind === 'pdf') return R.pdf?.turn(dir);
   if (!R.rendition) return;
   slideAnim?.finish();
   const go = () => (dir > 0 ? R.rendition.next() : R.rendition.prev());
@@ -695,7 +784,7 @@ $('btnPrev').onclick = prev;
 $('btnBack').onclick = closeBook;
 
 function onKey(e) {
-  if (!R.rendition || e.target?.tagName === 'INPUT' || e.target?.tagName === 'SELECT') return false;
+  if (!(R.rendition || R.pdf) || e.target?.tagName === 'INPUT' || e.target?.tagName === 'SELECT') return false;
   if (['ArrowRight', 'PageDown'].includes(e.key) || (e.key === ' ' && settings.flow === 'paginated')) { next(); return true; }
   if (['ArrowLeft', 'PageUp'].includes(e.key)) { prev(); return true; }
   if (e.key === 'Escape') { $('tocPanel').hidden = true; $('settingsPanel').hidden = true; }
@@ -754,10 +843,13 @@ function handleTap(evView, clientX, target) {
   if (target?.closest?.('a')) return;
   const sel = view?.getSelection?.();
   if (sel && sel.toString().length) return;
-  if (!$('tocPanel').hidden || !$('settingsPanel').hidden) { $('tocPanel').hidden = true; $('settingsPanel').hidden = true; return; }
   const frame = view?.frameElement;
+  tapAt((frame ? frame.getBoundingClientRect().left : 0) + clientX);
+}
+// Chạm ở vị trí x (toạ độ cửa sổ app): mép trái/phải lật trang, giữa ẩn/hiện thanh công cụ
+function tapAt(x) {
+  if (!$('tocPanel').hidden || !$('settingsPanel').hidden) { $('tocPanel').hidden = true; $('settingsPanel').hidden = true; return; }
   const wrap = $('viewerWrap').getBoundingClientRect();
-  const x = (frame ? frame.getBoundingClientRect().left : 0) + clientX;
   const f = (x - wrap.left) / wrap.width;
   if (settings.flow === 'paginated' && f < 0.3) prev();
   else if (settings.flow === 'paginated' && f > 0.7) next();
@@ -765,8 +857,14 @@ function handleTap(evView, clientX, target) {
 }
 
 const slider = $('progressSlider');
-slider.oninput = () => { $('progressText').textContent = `${Math.round(slider.value / 10)}%`; };
+const sliderPage = () => 1 + Math.round((slider.value / 1000) * (R.pdf.pages - 1));
+slider.oninput = () => {
+  $('progressText').textContent = R.kind === 'pdf' && R.pdf
+    ? `Trang ${sliderPage()}/${R.pdf.pages}`
+    : `${Math.round(slider.value / 10)}%`;
+};
 slider.onchange = () => {
+  if (R.kind === 'pdf') { R.pdf?.goTo(sliderPage()); slider.blur(); return; }
   if (!R.book?.locations.length()) return;
   const cfi = R.book.locations.cfiFromPercentage(slider.value / 1000);
   R.rendition.display(cfi);
@@ -777,8 +875,8 @@ slider.onchange = () => {
 $('btnToc').onclick = () => { $('settingsPanel').hidden = true; $('tocPanel').hidden = !$('tocPanel').hidden; document.querySelector('#tocList a.current')?.scrollIntoView({ block: 'center' }); };
 $('btnSettings').onclick = () => { $('tocPanel').hidden = true; $('settingsPanel').hidden = !$('settingsPanel').hidden; };
 document.querySelectorAll('[data-close]').forEach((b) => { b.onclick = () => { $(b.dataset.close).hidden = true; }; });
-$('fontUp').onclick = () => changeSetting({ fontSize: Math.min(200, settings.fontSize + 10) });
-$('fontDown').onclick = () => changeSetting({ fontSize: Math.max(60, settings.fontSize - 10) });
+$('fontUp').onclick = () => (R.kind === 'pdf' ? R.pdf?.zoomStep(1) : changeSetting({ fontSize: Math.min(200, settings.fontSize + 10) }));
+$('fontDown').onclick = () => (R.kind === 'pdf' ? R.pdf?.zoomStep(-1) : changeSetting({ fontSize: Math.max(60, settings.fontSize - 10) }));
 $('lhUp').onclick = () => changeSetting({ lineHeight: Math.min(2.4, +(settings.lineHeight + 0.1).toFixed(1)) });
 $('lhDown').onclick = () => changeSetting({ lineHeight: Math.max(1.0, +(settings.lineHeight - 0.1).toFixed(1)) });
 $('fontFamily').onchange = (e) => changeSetting({ fontFamily: e.target.value });
