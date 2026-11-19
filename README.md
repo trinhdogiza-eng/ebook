@@ -88,3 +88,8 @@ js/cloud-config.js  Client ID của bạn
 sw.js               service worker (chạy ngoại tuyến)
 tools/              máy chủ chạy thử, sách mẫu, trang kiểm thử
 ```
+
+## Thư viện Thư Quán + mở sách bằng link (từ v2.4)
+- Mở sách thẳng bằng đường link: `…/ebook/?mo=thu-vien/files/ten-sach.epub` (chỉ nhận tệp EPUB/PDF nằm trên cùng trang web). App tải tệp, thêm vào thư viện (không trùng nếu đã có) rồi mở luôn.
+- Trang thư viện **Thư Quán** nằm ở `publish/thu-vien/` → trên mạng là `…/ebook/thu-vien/`. Mỗi sách có `files.epub` sẽ có nút **📖 Đọc bằng Tree Ebook**.
+- Mã nguồn Thư Quán gốc: `WORKS/Web/ebook/`. Sửa ở đó xong chép lại vào `publish/thu-vien/`.
