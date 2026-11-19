@@ -8,7 +8,7 @@ import {
 } from './read-aloud.js';
 
 /* global ePub */
-const APP_VERSION = '2.1';
+const APP_VERSION = '2.2';
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Phiên bản ${APP_VERSION}`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -320,10 +320,13 @@ async function openBook(id) {
   if (sync.currentUser()) {
     remote = await Promise.race([sync.fetchOne(id).catch(() => null), new Promise((r) => setTimeout(() => r(null), 3000))]);
   }
-  let start = local?.cfi || null;
+  // line = đúng câu đang đọc (CFI của câu) → máy khác mở ra đúng trang chứa câu đó và đọc tiếp từ câu đó
+  let start = local?.line || local?.cfi || null;
+  R.line = local?.line || null;
   let fromOther = null;
   if (remote?.cfi && (remote.updatedAt || 0) > (local?.updatedAt || 0)) {
-    start = remote.cfi;
+    start = remote.line || remote.cfi;
+    R.line = remote.line || null;
     R.percent = remote.percent || R.percent;
     if (remote.deviceId !== deviceId) fromOther = remote.deviceName || 'thiết bị khác';
   }
@@ -331,7 +334,10 @@ async function openBook(id) {
 
   if (R.kind === 'pdf') { if (!(await openPdfReader(file.data, start))) return; }
   else await createRendition(start);
-  if (fromOther) toast(`Đã chuyển đến vị trí bạn đọc trên ${fromOther}`, null, null, 3500);
+  if (fromOther) {
+    toast(`Đã chuyển đến ${R.line ? 'đúng câu' : 'vị trí'} bạn đọc trên ${fromOther}`, null, null, 3500);
+    if (R.line) flashLine(R.line);
+  }
   updateSyncText();
 
   R.unwatch = sync.watchOne(id, onRemoteChange);
@@ -492,6 +498,7 @@ function injectStyle(contents) {
     p, li, blockquote, dd, dt, td, div { line-height: ${settings.lineHeight} !important; }
     ${recolor ? `body *:not(img):not(svg):not(image) { color: inherit !important; background-color: transparent !important; border-color: ${t.fg}33 !important; }` : ''}
     a, a * { color: ${t.link} !important; }
+    ::highlight(resume) { background-color: ${settings.theme === 'dark' ? 'rgba(110,170,255,.35)' : 'rgba(80,150,255,.28)'}; }
     ::highlight(tts) { background-color: ${settings.theme === 'dark' ? 'rgba(224,138,94,.38)' : 'rgba(255,196,0,.38)'}; }
     ${settings.fontFamily ? `body, body p, body div, body span, body li, body blockquote, body td, body h1, body h2, body h3, body h4 { font-family: ${settings.fontFamily} !important; }` : ''}
     img, svg, image { max-width: 100%; }
@@ -522,7 +529,7 @@ function changeSetting(patch) {
   if (R.kind === 'pdf') { if (R.pdf && ('flow' in patch || 'theme' in patch)) R.pdf.rebuild(); return; }
   if (!R.rendition) return;
   clearTimeout(rerenderTimer);
-  rerenderTimer = setTimeout(() => createRendition(R.cfi), 250);
+  rerenderTimer = setTimeout(() => createRendition(R.line || R.cfi), 250);
 }
 
 function flatten(items, level = 1, out = []) {
@@ -578,11 +585,18 @@ async function loadLocations(id) {
   }
 }
 
+// So sánh 2 vị trí CFI: -1 / 0 / 1
+const cfiCmp = (a, b) => { try { return new ePub.CFI().compare(a, b); } catch { return NaN; } };
+// Câu đang đọc còn nằm trong trang đang hiển thị không
+const lineOnPage = (line, loc) => !!line && cfiCmp(line, loc.start.cfi) >= 0 && cfiCmp(line, loc.end.cfi) <= 0;
+
 function onRelocated(loc) {
   const cfi = loc.start.cfi;
   R.cfi = cfi;
+  // Tự lật sang trang khác (không phải do giọng đọc) → vị trí là đầu trang mới
+  if (R.line && !lineOnPage(R.line, loc)) R.line = null;
   const book = R.book;
-  if (book.locations.length()) R.percent = book.locations.percentageFromCfi(cfi);
+  if (book.locations.length()) R.percent = book.locations.percentageFromCfi(R.line || cfi);
   else if (!R.percent || !R.skipNextSave) R.percent = (loc.start.index || 0) / Math.max(1, book.spine.length);
   const ch = currentChapter(loc.start.href);
   $('rChapter').textContent = ch?.label || R.meta.author || '';
@@ -609,25 +623,52 @@ function updateSyncText() {
   else el.textContent = navigator.onLine ? `Đã đồng bộ (${u.providerName})` : 'Ngoại tuyến — sẽ đồng bộ sau';
 }
 
-async function saveProgress(chapter) {
+// quiet: lưu theo từng câu khi đang đọc to → lưu trên máy ngay, gửi lên đám mây thưa hơn (tối đa 20 giây/lần;
+// tạm dừng / dừng / rời app thì gửi ngay)
+async function saveProgress(chapter, quiet) {
   const now = Date.now();
   R.lastSavedAt = now;
-  const rec = { id: R.id, cfi: R.cfi, percent: R.percent, chapter, updatedAt: now };
+  const line = R.kind === 'pdf' ? '' : (R.line || '');
+  const rec = { id: R.id, cfi: R.cfi, line, percent: R.percent, chapter, updatedAt: now };
   db.put('progress', rec).catch(() => {});
   R.pendingPush = {
     id: R.id,
     data: {
       title: R.meta.title, author: R.meta.author || '',
-      cfi: R.cfi, percent: R.percent, chapter, updatedAt: now, deviceId, deviceName,
+      cfi: R.cfi, line, percent: R.percent, chapter, updatedAt: now, deviceId, deviceName,
       ...(R.meta.source ? { source: R.meta.source } : {}),
     },
   };
+  if (quiet) { if (!R.pushTimer) R.pushTimer = setTimeout(flushPush, 20000); return; }
   clearTimeout(R.pushTimer);
   R.pushTimer = setTimeout(flushPush, 1500);
 }
 
+// Tô sáng vài giây câu đang đọc dở (khi mở từ vị trí của máy khác) để biết đọc tiếp từ đâu
+function lineSegment(cfi) {
+  let idx;
+  try { idx = new ePub.CFI(cfi).spinePos; } catch { return null; }
+  const c = findContents(idx);
+  if (!c) return null;
+  let r = null;
+  try { r = c.range(cfi); } catch { /* bỏ qua */ }
+  if (!r) return null;
+  return epubSegments(c, r.startContainer, r.startOffset)[0] || null;
+}
+function flashLine(cfi, tries = 0) {
+  const seg = lineSegment(cfi);
+  if (!seg) { if (tries < 10) setTimeout(() => flashLine(cfi, tries + 1), 200); return; }
+  const win = seg.contents.window;
+  try {
+    if (!win.CSS?.highlights || !win.Highlight) return;
+    win.CSS.highlights.set('resume', new win.Highlight(seg.range));
+    setTimeout(() => { try { win.CSS.highlights.delete('resume'); } catch { /* bỏ qua */ } }, 4000);
+  } catch { /* bỏ qua */ }
+}
+
 function flushPush() {
   clearTimeout(R.pushTimer);
+  R.pushTimer = null;
   const p = R.pendingPush;
   R.pendingPush = null;
   if (!p) return;
@@ -641,11 +682,15 @@ function flushPush() {
 // Thiết bị khác vừa đọc tiếp cuốn này
 function onRemoteChange(data) {
   if (!R.id || data.deviceId === deviceId || !data.cfi) return;
-  if ((data.updatedAt || 0) <= R.lastSavedAt || data.cfi === R.cfi) return;
+  if ((data.updatedAt || 0) <= R.lastSavedAt || (data.cfi === R.cfi && (data.line || '') === (R.line || ''))) return;
   R.lastSavedAt = data.updatedAt;
   toast(`${data.deviceName || 'Thiết bị khác'} đã đọc đến ${pctText(data.percent)}`, 'Chuyển đến', () => {
+    if (speaker && speaker.state !== 'idle') speaker.stop();
     R.skipNextSave = false;
-    goToLocation(data.cfi);
+    if (R.kind !== 'pdf' && data.line) {
+      R.line = data.line;
+      Promise.resolve(R.rendition?.display(data.line)).then(() => flashLine(data.line)).catch(() => {});
+    } else goToLocation(data.cfi);
   }, 15000);
 }
 
@@ -660,7 +705,7 @@ async function closeBook() {
   if (R.rendition) R.rendition.destroy();
   if (R.book) R.book.destroy();
   if (R.pdf) R.pdf.destroy();
-  Object.assign(R, { id: null, book: null, rendition: null, pdf: null, kind: null });
+  Object.assign(R, { id: null, book: null, rendition: null, pdf: null, kind: null, line: null });
   $('reader').classList.remove('is-pdf');
   $('tocPanel').hidden = true; $('settingsPanel').hidden = true;
   showView('library');
@@ -937,7 +982,7 @@ const deviceSpeaker = ttsSupported ? new Speaker(speakerOpts) : null;
 const googleSpeaker = new CloudSpeaker(speakerOpts);
 const aiSpeaker = new AiSpeaker({ ...speakerOpts, getAiVoice: () => settings.bgVoice || AI_DEFAULT_VOICE });
 let speaker = useGoogle() ? googleSpeaker : deviceSpeaker;
-if (location.hostname === 'localhost') Object.assign(window, { __dev: deviceSpeaker, __ai: aiSpeaker, __cur: () => speaker });
+if (location.hostname === 'localhost') Object.assign(window, { __dev: deviceSpeaker, __ai: aiSpeaker, __cur: () => speaker, __flash: (c) => flashLine(c) });
 
 /* ----- Khi khoá màn hình / chuyển app: chuyển sang giọng AI trong máy; mở lại: về giọng của máy ----- */
 // Giọng có sẵn của máy (Chrome Android) tự dừng khi app bị ẩn; giọng AI phát như tệp âm thanh nên chạy tiếp.
@@ -1000,8 +1045,9 @@ if (location.hostname === 'localhost') window.__speaker = speaker; // chỉ đ�
 
 const findContents = (idx) => R.rendition?.getContents().find((c) => c.sectionIndex === idx);
 
-// Các câu của 1 chương EPUB (đã hiển thị) kể từ nút startNode; mỗi câu kèm Range để tô sáng & lật trang theo
-function epubSegments(contents, startNode) {
+// Các câu của 1 chương EPUB (đã hiển thị) kể từ điểm (startNode, startOffset) — bắt đầu đúng câu chứa điểm đó;
+// mỗi câu kèm Range để tô sáng & lật trang theo; câu cuối mỗi đoạn văn có paraEnd (để nghỉ lâu hơn chút)
+function epubSegments(contents, startNode, startOffset) {
   const doc = contents.document;
   let blocks = [...doc.body.querySelectorAll(BLOCKS)].filter((el) => !el.querySelector(BLOCKS) && el.textContent.trim());
   if (!blocks.length && doc.body.textContent.trim()) blocks = [doc.body];
@@ -1022,11 +1068,17 @@ function epubSegments(contents, startNode) {
       while (k > 0 && nodes[k][1] > i) k--;
       return [nodes[k][0], Math.min(i - nodes[k][1], nodes[k][0].nodeValue.length)];
     };
+    const first = segs.length;
     for (const [s, e] of splitSentences(full)) {
       const range = doc.createRange();
       try { range.setStart(...at(s)); range.setEnd(...at(e)); } catch { continue; }
+      // Bỏ các câu nằm hẳn trước điểm bắt đầu (điểm ở giữa đoạn văn)
+      if (startNode && segs.length === 0) {
+        try { if (range.comparePoint(startNode, startOffset || 0) > 0) continue; } catch { /* giữ câu */ }
+      }
       segs.push({ text: full.slice(s, e).trim().normalize('NFC'), range, contents });
     }
+    if (segs.length > first) segs[segs.length - 1].paraEnd = true;
   }
   return segs;
 }
@@ -1040,9 +1092,11 @@ function epubProvider() {
         const loc = R.rendition.currentLocation();
         secIndex = loc?.start?.index;
         const c = findContents(secIndex);
-        let node = null;
-        try { node = c?.range(loc.start.cfi)?.startContainer; } catch { /* bắt đầu từ đầu chương */ }
-        queue = c ? epubSegments(c, node) : [];
+        // Đọc tiếp đúng câu đang đọc dở (nếu câu đó còn trong trang này), không thì từ đầu trang
+        const from = loc?.start && lineOnPage(R.line, loc) ? R.line : loc?.start?.cfi;
+        let r = null;
+        try { r = c?.range(from); } catch { /* bắt đầu từ đầu chương */ }
+        queue = c ? epubSegments(c, r?.startContainer, r?.startOffset) : [];
       }
       while (!queue.length) { // hết chương → sang chương sau
         const sec = R.book?.spine.get(secIndex + 1);
@@ -1110,12 +1164,23 @@ function ttsFollow(seg) {
   }
   if (!R.rendition) return;
   if (seg.offline) { // câu lấy từ nội dung sách lúc app bị ẩn (chương chưa hiển thị)
-    if (document.hidden) { ttsNeedsResync = seg.sectionIndex; speaker?.setupMediaSession(); return; }
+    if (document.hidden) {
+      ttsNeedsResync = seg.sectionIndex; speaker?.setupMediaSession();
+      // Vẫn lưu & đồng bộ đúng câu đang đọc dù app đang ẩn
+      const sec = R.book?.spine.get(seg.sectionIndex);
+      if (sec) {
+        try {
+          const r = seg.range.cloneRange(); r.collapse(true);
+          markLine(new ePub.CFI(r, sec.cfiBase).toString(), currentChapter(sec.href)?.label);
+        } catch { /* bỏ qua */ }
+      }
+      return;
+    }
     const c = findContents(seg.sectionIndex);
     if (!c) { // đã mở lại app: nhảy tới chương đang đọc
       ttsNeedsResync = false;
       const sec = R.book?.spine.get(seg.sectionIndex);
-      if (sec) R.rendition.display(sec.href);
+      if (sec) R.rendition.display(lineIn(sec.index) || sec.href);
       return;
     }
     // Chương đã hiển thị: tìm lại đúng câu đó trong trang để tô sáng & lật theo
@@ -1127,6 +1192,7 @@ function ttsFollow(seg) {
     seg = c.ttsSegs[k];
   }
   clearTtsHighlight();
+  try { const r = seg.range.cloneRange(); r.collapse(true); markLine(seg.contents.cfiFromRange(r)); } catch { /* bỏ qua */ }
   const win = seg.contents.window;
   try { if (win.CSS?.highlights && win.Highlight) win.CSS.highlights.set('tts', new win.Highlight(seg.range)); } catch { /* bỏ qua */ }
   const rect = seg.range.getClientRects()[0] || seg.range.getBoundingClientRect();
@@ -1142,6 +1208,17 @@ function ttsFollow(seg) {
   const p = pager();
   if (p && x >= wrap.right && x < wrap.right + p.delta) turn(1);
   else R.rendition.display(seg.contents.cfiFromRange(seg.range));
+}
+
+// Câu đang đọc nếu nó thuộc chương idx (để quay lại app thì mở đúng trang chứa câu đó)
+const lineIn = (idx) => { try { return R.line && new ePub.CFI(R.line).spinePos === idx ? R.line : null; } catch { return null; } };
+
+// Ghi nhớ câu đang đọc (lưu trên máy ngay, gửi lên đám mây thưa) → máy khác mở đúng câu này
+function markLine(cfi, chapter) {
+  if (!cfi || !R.id) return;
+  R.line = cfi;
+  if (R.book?.locations.length()) R.percent = R.book.locations.percentageFromCfi(cfi) || R.percent;
+  saveProgress(chapter ?? $('rChapter').textContent ?? '', true);
 }
 
 function ttsStart() {
@@ -1169,6 +1246,7 @@ function ttsUI(state, ev) {
   $('ttsPlay').setAttribute('aria-label', state === 'playing' ? 'Tạm dừng' : 'Đọc tiếp');
   $('ttsRate').textContent = `${settings.ttsRate}×`;
   if (state === 'idle') clearTtsHighlight();
+  if (state !== 'playing' && R.pendingPush) flushPush(); // tạm dừng / dừng đọc → gửi ngay câu đang đọc lên đám mây
   if (ev === 'end') toast('Đã đọc đến hết sách', null, null, 3000);
 }
 $('btnTts').onclick = () => {
@@ -1295,7 +1373,7 @@ document.addEventListener('visibilitychange', () => {
     if (ttsNeedsResync !== false && R.rendition) { // trong lúc ẩn đã đọc sang chương khác → nhảy tới đó
       const sec = R.book?.spine.get(ttsNeedsResync);
       ttsNeedsResync = false;
-      if (sec && !findContents(sec.index)) R.rendition.display(sec.href);
+      if (sec && !findContents(sec.index)) R.rendition.display(lineIn(sec.index) || sec.href);
     }
   }
 });
@@ -1359,7 +1437,7 @@ async function uploadLocalProgress() {
     const r = remoteMap[b.id];
     const base = { title: b.title, author: b.author || '', ...(b.source ? { source: b.source } : {}) };
     if (p && (!r || (p.updatedAt || 0) > (r.updatedAt || 0))) {
-      batch[b.id] = { ...base, cfi: p.cfi, percent: p.percent, chapter: p.chapter || '', updatedAt: p.updatedAt, deviceId, deviceName };
+      batch[b.id] = { ...base, cfi: p.cfi, line: p.line || '', percent: p.percent, chapter: p.chapter || '', updatedAt: p.updatedAt, deviceId, deviceName };
     } else if (!r) batch[b.id] = base;
   }
   if (Object.keys(batch).length) sync.pushMany(batch).catch(() => {});
