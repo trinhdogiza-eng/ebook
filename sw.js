@@ -1,5 +1,5 @@
 // Service worker: lưu sẵn giao diện và thư viện để app mở được khi không có mạng.
-const CACHE = 'epub-reader-v5';
+const CACHE = 'epub-reader-v6';
 const SHELL = [
   './', 'index.html', 'css/style.css', 'js/app.js', 'js/db.js', 'js/sync.js', 'js/cloud-config.js',
   'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-180.png', 'icons/icon-192.png',
@@ -26,9 +26,10 @@ self.addEventListener('fetch', (e) => {
   const sameOrigin = url.origin === self.location.origin;
 
   if (sameOrigin) {
-    // Mạng trước (để nhận bản cập nhật), rơi về bộ nhớ đệm khi ngoại tuyến
+    // Mạng trước (để nhận bản cập nhật), rơi về bộ nhớ đệm khi ngoại tuyến.
+    // cache: 'no-cache' → luôn hỏi lại máy chủ, không dùng bản HTTP-cache cũ (GitHub Pages cho cache 10 phút).
     e.respondWith(
-      fetch(req).then((res) => {
+      fetch(req, { cache: 'no-cache' }).then((res) => {
         if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
         return res;
       }).catch(() => caches.match(req, { ignoreSearch: true }).then((r) => r || caches.match('index.html'))),
