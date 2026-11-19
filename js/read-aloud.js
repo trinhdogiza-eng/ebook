@@ -140,7 +140,7 @@ export class Speaker {
       const m = this.getMeta?.() || {};
       if (window.MediaMetadata) {
         ms.metadata = new MediaMetadata({
-          title: m.title || 'Đọc EPUB', artist: m.artist || '', album: m.album || '',
+          title: m.title || 'Tree Ebook', artist: m.artist || '', album: m.album || '',
           artwork: m.artwork ? [{ src: m.artwork, sizes: '512x512' }] : [{ src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' }],
         });
       }
