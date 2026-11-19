@@ -2,7 +2,7 @@ import * as db from './db.js';
 import * as sync from './sync.js';
 
 /* global ePub */
-const APP_VERSION = '1.4';
+const APP_VERSION = '1.5';
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Phiên bản ${APP_VERSION}`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -563,49 +563,54 @@ function pager() {
   return { c, delta: m.layout.delta };
 }
 
-let anim = null;
-function animateScroll(c, from, to, ms) {
-  anim?.finish();
-  return new Promise((resolve) => {
-    const t0 = performance.now();
-    let done = false;
-    const finish = () => { if (done) return; done = true; c.scrollLeft = to; anim = null; resolve(); };
-    anim = { finish };
-    const step = (now) => {
-      if (done) return;
-      const p = Math.min(1, (now - t0) / ms);
-      c.scrollLeft = from + (to - from) * (1 - (1 - p) ** 3); // ease-out
-      if (p < 1) requestAnimationFrame(step); else finish();
-    };
-    requestAnimationFrame(step);
-    setTimeout(finish, ms + 150); // phòng khi trình duyệt tạm dừng hoạt ảnh
-  });
+// Cách làm mượt (v1.5): KHÔNG cuộn khung sách từng khung hình (mỗi lần cuộn epub.js lại tính vị trí
+// và app lưu tiến độ → giật). Thay vào đó lật thật đúng 1 lần (đổi scrollLeft), còn phần "trượt" mắt thấy
+// là dịch chuyển (transform) phần tử trang bằng GPU.
+const pageEl = () => R.rendition?.manager?.container?.querySelector('.epub-view');
+const EASE = 'cubic-bezier(.25,.8,.25,1)';
+let slideAnim = null;
+function setShift(px) {
+  const v = pageEl();
+  if (v) v.style.transform = px ? `translate3d(${px}px,0,0)` : '';
+}
+function animShift(from, to, ms) {
+  slideAnim?.finish();
+  const v = pageEl();
+  if (!v || !v.animate) { setShift(to); return Promise.resolve(); }
+  v.style.transform = to ? `translate3d(${to}px,0,0)` : '';
+  const a = v.animate(
+    [{ transform: `translate3d(${from}px,0,0)` }, { transform: `translate3d(${to}px,0,0)` }],
+    { duration: ms, easing: EASE },
+  );
+  slideAnim = a;
+  return a.finished.catch(() => {}).then(() => { if (slideAnim === a) slideAnim = null; });
 }
 
 function slideIn(dir) {
-  if (reduceMotion() || !$('viewer').animate) return;
-  $('viewer').animate(
-    [{ transform: `translateX(${dir * 30}%)`, opacity: 0 }, { transform: 'none', opacity: 1 }],
-    { duration: 300, easing: 'cubic-bezier(.2,.7,.2,1)' },
+  const v = $('viewer');
+  if (reduceMotion() || !v.animate) return;
+  v.animate(
+    [{ transform: `translate3d(${dir * 48}px,0,0)`, opacity: 0 }, { transform: 'none', opacity: 1 }],
+    { duration: 260, easing: EASE },
   );
 }
 
-// dir = 1: trang sau, -1: trang trước. fromScroll: vị trí trang trước khi bắt đầu kéo.
-async function turn(dir, fromScroll) {
+// dir = 1: trang sau, -1: trang trước. fromScroll: vị trí trang lúc bắt đầu kéo; shift: độ lệch hiện tại do kéo.
+async function turn(dir, fromScroll, shift = 0) {
   if (!R.rendition) return;
-  anim?.finish();
+  slideAnim?.finish();
   const go = () => (dir > 0 ? R.rendition.next() : R.rendition.prev());
   const p = pager();
-  if (!p || reduceMotion()) return go();
+  if (!p || reduceMotion()) { setShift(0); return go(); }
   const { c, delta } = p;
   const start = fromScroll ?? c.scrollLeft;
   const within = dir > 0 ? start + c.offsetWidth + delta <= c.scrollWidth + 1 : start > 1;
   if (within) {
-    await animateScroll(c, c.scrollLeft, start + dir * delta, 280);
-    c.scrollLeft = start; // trả về rồi để epub.js tự lật đúng 1 trang và báo vị trí (cùng khung hình, không nháy)
-    await go();
+    // Lật thật 1 lần; cùng lúc đặt độ lệch để mắt vẫn thấy trang cũ, rồi trượt độ lệch về 0.
+    c.scrollLeft = start + dir * delta; // epub.js tự báo vị trí mới (sự kiện scrolled)
+    await animShift(shift + dir * delta, 0, 320);
   } else {
-    if (Math.abs(c.scrollLeft - start) > 1) await animateScroll(c, c.scrollLeft, start, 160);
+    if (shift) await animShift(shift, 0, 140);
     await go();
     slideIn(dir);
   }
@@ -616,9 +621,9 @@ const prev = () => turn(-1);
 // Kéo trang theo ngón tay (dùng chung cho khung sách và 2 vùng chạm mép)
 let drag = null;
 function dragStart(x, y) {
-  anim?.finish();
+  slideAnim?.finish();
   const p = pager();
-  drag = { x, y, time: Date.now(), scroll: p ? p.c.scrollLeft : 0, active: false, lastX: x, lastT: Date.now(), v: 0 };
+  drag = { x, y, time: Date.now(), scroll: p ? p.c.scrollLeft : 0, active: false, shift: 0, lastX: x, lastT: Date.now(), v: 0 };
 }
 function dragMove(x, y) {
   const s = drag;
@@ -631,10 +636,18 @@ function dragMove(x, y) {
     else return;
   }
   const max = p.c.scrollWidth - p.c.offsetWidth;
-  p.c.scrollLeft = Math.max(0, Math.min(max, s.scroll - dx));
+  // Ở đầu/cuối chương không còn trang bên cạnh → kéo có lực cản
+  const atEdge = (dx > 0 && s.scroll <= 1) || (dx < 0 && s.scroll >= max - 1);
+  s.shift = atEdge ? dx / 3 : dx;
+  setShift(s.shift);
   const now = Date.now();
   s.v = (x - s.lastX) / Math.max(1, now - s.lastT);
   s.lastX = x; s.lastT = now;
+}
+function cancelDrag() {
+  const s = drag;
+  drag = null;
+  if (s?.active) animShift(s.shift, 0, 200);
 }
 // Trả về 'tap' nếu là một cú chạm, 'done' nếu đã xử lý (lật/kéo), '' nếu bỏ qua.
 function dragEnd(x, y) {
@@ -645,8 +658,8 @@ function dragEnd(x, y) {
   const p = pager();
   if (s.active && p) {
     const fling = Math.abs(s.v) > 0.35;
-    if (fling || Math.abs(dx) > p.c.offsetWidth * 0.18) turn((fling ? s.v : dx) < 0 ? 1 : -1, s.scroll);
-    else animateScroll(p.c, p.c.scrollLeft, s.scroll, 180); // chưa đủ xa → trượt về chỗ cũ
+    if (fling || Math.abs(dx) > p.c.offsetWidth * 0.18) turn((fling ? s.v : dx) < 0 ? 1 : -1, s.scroll, s.shift);
+    else animShift(s.shift, 0, 200); // chưa đủ xa → trượt về chỗ cũ
     return 'done';
   }
   if (settings.flow === 'paginated' && Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) && dt < 1000) {
@@ -672,7 +685,7 @@ function bindTapZone(el, action) {
     e.preventDefault(); // không phát thêm "click"
     if (dragEnd(t.screenX, t.screenY) === 'tap') action();
   }, { passive: false });
-  el.addEventListener('touchcancel', () => { const s = drag; drag = null; const p = pager(); if (s?.active && p) animateScroll(p.c, p.c.scrollLeft, s.scroll, 180); });
+  el.addEventListener('touchcancel', cancelDrag);
   el.addEventListener('click', action); // chuột / bút cảm ứng
 }
 bindTapZone($('tapPrev'), prev);
@@ -702,8 +715,7 @@ function onTouchStart(e) {
   if (e.touches?.length === 2) {
     const d = touchDist(e.touches);
     pinch = { d0: d, d };
-    if (drag?.active) { const p = pager(); if (p) p.c.scrollLeft = drag.scroll; }
-    drag = null;
+    cancelDrag();
     return;
   }
   const t = e.changedTouches?.[0];
