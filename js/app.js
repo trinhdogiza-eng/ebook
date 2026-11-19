@@ -2,7 +2,9 @@ import * as db from './db.js';
 import * as sync from './sync.js';
 
 /* global ePub */
+const APP_VERSION = '1.3';
 const $ = (id) => document.getElementById(id);
+$('appVersion').textContent = `Phiên bản ${APP_VERSION}`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const pctText = (p) => `${Math.round((p || 0) * 100)}%`;
 
@@ -327,6 +329,7 @@ async function createRendition(cfi) {
   rendition.on('relocated', onRelocated);
   rendition.on('click', onFrameClick);
   rendition.on('touchstart', onTouchStart);
+  rendition.on('touchmove', onTouchMove);
   rendition.on('touchend', onTouchEnd);
   rendition.on('keydown', onKey);
   applyChrome();
@@ -381,7 +384,7 @@ function injectStyle(contents) {
   const bodyFs = Math.round(baseFs * settings.fontSize) / 100;
   const recolor = settings.theme !== 'light';
   style.textContent = `
-    html { font-size: ${settings.fontSize}% !important; background: ${t.bg} !important; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+    html { font-size: ${settings.fontSize}% !important; background: ${t.bg} !important; touch-action: pan-x pan-y; -webkit-tap-highlight-color: transparent; }
     body { font-size: ${bodyFs}px !important; background: ${t.bg} !important; color: ${t.fg} !important; -webkit-text-size-adjust: none; }
     p, li, blockquote, dd, dt, td, div { line-height: ${settings.lineHeight} !important; }
     ${recolor ? `body *:not(img):not(svg):not(image) { color: inherit !important; background-color: transparent !important; border-color: ${t.fg}33 !important; }` : ''}
@@ -393,6 +396,7 @@ function injectStyle(contents) {
 
 function applyChrome() {
   document.body.dataset.theme = settings.theme;
+  $('reader').classList.toggle('paginated', settings.flow === 'paginated');
   const t = THEMES[settings.theme];
   document.querySelector('meta[name="theme-color"]').content = t.bar;
   $('viewerWrap').style.background = t.bg;
@@ -547,6 +551,28 @@ async function closeBook() {
 /* ----- Điều hướng ----- */
 const next = () => R.rendition?.next();
 const prev = () => R.rendition?.prev();
+
+// Vùng chạm 2 mép nằm trên trang app (ngoài khung sách) → luôn nhận chạm/vuốt trên iPhone/iPad,
+// kể cả khi Safari không chuyển sự kiện vào trong khung sách.
+function bindTapZone(el, action) {
+  let s = null;
+  el.addEventListener('touchstart', (e) => {
+    const t = e.changedTouches[0];
+    s = { x: t.clientX, y: t.clientY, time: Date.now() };
+  }, { passive: true });
+  el.addEventListener('touchend', (e) => {
+    const t = e.changedTouches[0];
+    const start = s; s = null;
+    if (!start) return;
+    e.preventDefault(); // không phát thêm "click"
+    const dx = t.clientX - start.x, dy = t.clientY - start.y;
+    if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) (dx < 0 ? next : prev)();
+    else if (Math.abs(dx) < 15 && Math.abs(dy) < 15) action();
+  }, { passive: false });
+  el.addEventListener('click', action); // chuột / bút cảm ứng
+}
+bindTapZone($('tapPrev'), prev);
+bindTapZone($('tapNext'), next);
 $('btnNext').onclick = next;
 $('btnPrev').onclick = prev;
 $('btnBack').onclick = closeBook;
@@ -567,16 +593,40 @@ document.addEventListener('keydown', (e) => {
 // nên chạm và vuốt được nhận trực tiếp từ touchstart/touchend. Chuột (máy tính) vẫn dùng click.
 let touch = null;
 let lastTouchEnd = 0;
+let pinch = null; // chụm/mở 2 ngón để đổi cỡ chữ
+const touchDist = (ts) => Math.hypot(ts[0].screenX - ts[1].screenX, ts[0].screenY - ts[1].screenY);
 function onTouchStart(e) {
+  if (e.touches?.length === 2) {
+    const d = touchDist(e.touches);
+    pinch = { d0: d, d };
+    touch = null;
+    return;
+  }
   const t = e.changedTouches?.[0];
-  touch = t ? { x: t.screenX, y: t.screenY, time: Date.now(), multi: e.touches?.length > 1 } : null;
+  touch = t && !pinch ? { x: t.screenX, y: t.screenY, time: Date.now() } : null;
+}
+function onTouchMove(e) {
+  if (pinch && e.touches?.length === 2) pinch.d = touchDist(e.touches);
 }
 function onTouchEnd(e) {
   lastTouchEnd = Date.now();
+  if (pinch) {
+    if (e.touches?.length) return; // còn ngón trên màn hình
+    const ratio = pinch.d / pinch.d0;
+    pinch = null;
+    touch = null;
+    if (ratio > 1.12 || ratio < 0.89) {
+      const target = Math.round((settings.fontSize * Math.sqrt(ratio)) / 10) * 10; // dịu hơn tỉ lệ ngón tay
+      const step = ratio > 1 ? Math.max(target, settings.fontSize + 10) : Math.min(target, settings.fontSize - 10);
+      const size = Math.min(200, Math.max(60, step));
+      if (size !== settings.fontSize) { changeSetting({ fontSize: size }); toast(`Cỡ chữ ${size}%`, null, null, 1200); }
+    }
+    return;
+  }
   const t = e.changedTouches?.[0];
   const start = touch;
   touch = null;
-  if (!t || !start || start.multi) return;
+  if (!t || !start) return;
   const dx = t.screenX - start.x, dy = t.screenY - start.y;
   const dt = Date.now() - start.time;
   if (settings.flow === 'paginated' && Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) && dt < 1000) {
