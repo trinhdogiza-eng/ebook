@@ -331,6 +331,20 @@ export async function pushMany(map) {
   await flush();
 }
 
+// Tuỳ chọn dùng chung mọi thiết bị (vd. khoá giọng Google), lưu trong progress.json → "prefs"
+export const getPref = (name) => cache?.prefs?.[name];
+export async function setPref(name, value) {
+  if (!ready()) throw new NeedAuth();
+  await flush().catch(() => {});
+  const remote = await readRemote();
+  remote.prefs = { ...(remote.prefs || {}), [name]: value };
+  const pending = lsGet(K_PENDING) || {};
+  for (const [id, d] of Object.entries(pending)) remote.books[id] = merge(remote.books[id], d);
+  await writeRemote(remote);
+  cache = remote;
+  emit();
+}
+
 export async function fetchOne(id) {
   if (!ready()) return null;
   const c = await pull();
