@@ -99,3 +99,8 @@ tools/              máy chủ chạy thử, sách mẫu, trang kiểm thử
 - App tự chuyển sang EPUB ngay trên máy ([js/mobi-convert.js](js/mobi-convert.js), dùng `mobi.js` của foliate-js — MIT) rồi mở như EPUB: mục lục, đọc to, đồng bộ trang đều dùng được. Mã sách vẫn băm từ tệp gốc nên cùng một tệp trên các máy luôn khớp nhau.
 - Lần đầu cần mạng để tải thư viện (sau đó được lưu sẵn để dùng ngoại tuyến).
 - Không đọc được: sách có **DRM** (mua trên Amazon Kindle) và tệp PRC dạng PalmDoc rất cũ.
+
+## Mở tiếp sách đang đọc khi bật app (từ v2.6)
+- Tắt app lúc đang đọc → lần sau mở app vào thẳng cuốn đó, đúng trang đã đọc.
+- Bấm **‹** về thư viện trước khi tắt → lần sau mở vào thư viện.
+- Muốn luôn vào thư viện: **Aa → Khi mở app → Vào thư viện**.

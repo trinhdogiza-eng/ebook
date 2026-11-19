@@ -9,7 +9,7 @@ import {
 } from './read-aloud.js';
 
 /* global ePub */
-const APP_VERSION = '2.5';
+const APP_VERSION = '2.6';
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -33,10 +33,23 @@ if (!deviceId) { deviceId = Math.random().toString(36).slice(2) + Date.now().toS
 let deviceName = lsGet('deviceName', guessDeviceName());
 
 const settings = Object.assign(
-  { fontSize: 100, lineHeight: 1.5, fontFamily: '', theme: 'light', flow: 'paginated', pageAnim: 'slide', ttsRate: 1.5, ttsVoice: '', ttsEngine: 'auto', gVoice: '', bgVoice: 'vi_VN-vais1000-medium', openVoice: 'device' },
+  { fontSize: 100, lineHeight: 1.5, fontFamily: '', theme: 'light', flow: 'paginated', pageAnim: 'slide', ttsRate: 1.5, ttsVoice: '', ttsEngine: 'auto', gVoice: '', bgVoice: 'vi_VN-vais1000-medium', openVoice: 'device', startView: 'resume' },
   lsGet('settings', {}),
 );
 const saveSettings = () => lsSet('settings', settings);
+
+// Sách đang mở: tắt app lúc đang đọc → bật lại mở tiếp đúng cuốn đó (vị trí đọc đã lưu sẵn trong tiến độ)
+const lastBook = {
+  KEY: 'lastBook',
+  remember(id) { lsSet(this.KEY, id); },
+  forget(id) { if (!id || lsGet(this.KEY, null) === id) localStorage.removeItem(this.KEY); },
+  async resume() {
+    const id = lsGet(this.KEY, null);
+    if (!id) return;
+    if (!(await db.get('files', id))) { this.forget(id); return; }
+    openBook(id);
+  },
+};
 document.body.dataset.theme = settings.theme;
 
 const THEMES = {
@@ -114,6 +127,7 @@ async function renderLibrary() {
       e.stopPropagation();
       if (!confirm(`Xoá “${b.title}” khỏi máy này? (Tiến độ đã đồng bộ vẫn được giữ.)`)) return;
       await db.removeBook(b.id);
+      lastBook.forget(b.id);
       renderLibrary();
     };
     grid.appendChild(el);
@@ -311,7 +325,8 @@ function showView(name) {
 
 async function openBook(id) {
   const [file, meta, local] = await Promise.all([db.get('files', id), db.get('books', id), db.get('progress', id)]);
-  if (!file) { toast('Không tìm thấy tệp sách trên máy này'); return; }
+  if (!file) { toast('Không tìm thấy tệp sách trên máy này'); lastBook.forget(id); return; }
+  lastBook.remember(id);
   Object.assign(R, { id, meta, cfi: null, percent: local?.percent || 0, toc: [], flatToc: [] });
   R.kind = meta.format === 'pdf' ? 'pdf' : 'epub';
   showView('reader');
@@ -374,6 +389,7 @@ async function openPdfReader(data, startCfi) {
   } catch (e) {
     console.error(e);
     toast(`Không mở được PDF: ${e.message || e}`);
+    lastBook.forget(R.id);
     closeBook();
     return false;
   }
@@ -539,6 +555,7 @@ function applyChrome() {
   $('flowMode').value = settings.flow;
   $('pageAnim').value = settings.pageAnim;
   $('pageAnimRow').hidden = settings.flow !== 'paginated';
+  $('startView').value = settings.startView;
   document.querySelectorAll('.sw').forEach((b) => b.classList.toggle('active', b.dataset.theme === settings.theme));
 }
 
@@ -889,7 +906,8 @@ bindTapZone($('tapPrev'), prev);
 bindTapZone($('tapNext'), next);
 $('btnNext').onclick = next;
 $('btnPrev').onclick = prev;
-$('btnBack').onclick = closeBook;
+// Chủ động quay về thư viện → lần sau mở app vào thư viện
+$('btnBack').onclick = () => { lastBook.forget(); closeBook(); };
 
 function onKey(e) {
   if (!(R.rendition || R.pdf) || e.target?.tagName === 'INPUT' || e.target?.tagName === 'SELECT') return false;
@@ -1385,6 +1403,7 @@ $('lhDown').onclick = () => changeSetting({ lineHeight: Math.max(1.0, +(settings
 $('fontFamily').onchange = (e) => changeSetting({ fontFamily: e.target.value });
 $('flowMode').onchange = (e) => changeSetting({ flow: e.target.value });
 $('pageAnim').onchange = (e) => { settings.pageAnim = e.target.value; saveSettings(); }; // không cần dựng lại trang
+$('startView').onchange = (e) => { settings.startView = e.target.value; saveSettings(); };
 document.querySelectorAll('.sw').forEach((b) => { b.onclick = () => changeSetting({ theme: b.dataset.theme }); });
 
 // Lưu ngay khi rời app / chuyển tab / khoá màn hình
@@ -1527,6 +1546,7 @@ applyChrome();
 renderLibrary();
 updateAccountUI();
 if (openLink) openFromLink(openLink);
+else if (settings.startView === 'resume') lastBook.resume().catch(() => {});
 sync.init(onUser).then(() => {
   const err = sync.takeLastError();
   if (err) toast(`Đăng nhập không thành công: ${err}`, null, null, 8000);
