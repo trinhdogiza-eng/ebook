@@ -138,6 +138,15 @@ code { font-size: .9em; background: var(--line); padding: 1px 5px; border-radius
   border: 0; background: none; font-size: 32px; color: var(--muted); cursor: pointer; opacity: .5;
 }
 .pager:hover { opacity: 1; }
+/* Vùng chạm 2 mép (thuộc trang app, không nằm trong khung sách) — luôn nhận chạm trên iPhone/iPad */
+.tapzone {
+  position: absolute; top: 0; bottom: 0; width: 24%; z-index: 3; display: none;
+  cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: pan-y;
+  -webkit-user-select: none; user-select: none;
+}
+.tapzone.left { left: 0; } .tapzone.right { right: 0; }
+@media (pointer: coarse) { #reader.paginated .tapzone { display: block; } }
+.version { padding: 12px 16px; margin: 0; }
 .pager.prev { left: 2px; } .pager.next { right: 2px; }
 .progress-text { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
 #progressSlider { width: 100%; accent-color: var(--accent); }
