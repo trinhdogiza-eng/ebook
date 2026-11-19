@@ -141,7 +141,7 @@ code { font-size: .9em; background: var(--line); padding: 1px 5px; border-radius
 /* Vùng chạm 2 mép (thuộc trang app, không nằm trong khung sách) — luôn nhận chạm trên iPhone/iPad */
 .tapzone {
   position: absolute; top: 0; bottom: 0; width: 24%; z-index: 3; display: none;
-  cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: pan-y;
+  cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: none;
   -webkit-user-select: none; user-select: none;
 }
 .tapzone.left { left: 0; } .tapzone.right { right: 0; }
