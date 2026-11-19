@@ -4,10 +4,11 @@ import { PdfReader, openPdf, pdfInfo, isPdfBuffer } from './pdf-reader.js';
 import {
   Speaker, CloudSpeaker, ttsSupported, voices, isVietnamese, pickVoice, unlockSpeech, splitSentences,
   googleVoices, GOOGLE_DEFAULT_VOICE, AiSpeaker, AI_VOICES, AI_DEFAULT_VOICE, aiDownload, aiVoiceStored,
+  aiWarmup, stream,
 } from './read-aloud.js';
 
 /* global ePub */
-const APP_VERSION = '1.9';
+const APP_VERSION = '2.0';
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Phiên bản ${APP_VERSION}`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -951,7 +952,9 @@ function handoff(from, to) {
   const segs = [from.current, ...(from.ahead || []).map((i) => i.seg)];
   const prov = chainProvider(segs, from.provider);
   const paused = from.state === 'paused';
+  from.keepStream = true; // luồng âm thanh phải chạy liên tục khi chuyển giọng (nhất là lúc đã khoá màn hình)
   from.stop(true);
+  from.keepStream = false;
   speaker = to;
   to.start(prov);
   if (paused) to.pause();
@@ -969,7 +972,7 @@ let aiDownloading = false;
 async function prepareBackgroundVoice() {
   if (!bgAiOn() || aiDownloading) return;
   const v = settings.bgVoice;
-  if (await aiVoiceStored(v)) return;
+  if (await aiVoiceStored(v)) { aiWarmup(v).catch(() => {}); return; }
   aiDownloading = true;
   toast(`Đang tải giọng AI (${AI_VOICES[v].size}) để đọc tiếp khi khoá màn hình…`, null, null, 4000);
   let last = 0;
@@ -979,6 +982,7 @@ async function prepareBackgroundVoice() {
       if (pct >= last + 20) { last = pct; toast(`Đang tải giọng AI… ${pct}%`, null, null, 2500); }
     });
     toast('Đã tải xong giọng AI — giờ khoá màn hình vẫn nghe tiếp được', null, null, 4000);
+    aiWarmup(v).catch(() => {});
   } catch (e) {
     toast(`Không tải được giọng AI: ${e.message || e}`, null, null, 6000);
   } finally { aiDownloading = false; }
@@ -1135,6 +1139,7 @@ function ttsFollow(seg) {
 
 function ttsStart() {
   if (!(R.rendition || R.pdf)) return;
+  stream.ensure(); // mở luồng âm thanh ngay trong lúc bấm nút (trình duyệt chỉ cho phép khi có thao tác chạm)
   const next = useGoogle() ? googleSpeaker : deviceSpeaker;
   if (!next) { toast('Trình duyệt này không hỗ trợ đọc to'); return; }
   if (speaker && speaker !== next) speaker.stop(true);
