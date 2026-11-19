@@ -8,7 +8,7 @@ import {
 } from './read-aloud.js';
 
 /* global ePub */
-const APP_VERSION = '2.3';
+const APP_VERSION = '2.4';
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1461,11 +1461,54 @@ function onUser(u) {
   });
 }
 
+/* ================= Mở sách từ đường link ================= */
+// Ví dụ: …/ebook/?mo=thu-vien/files/ten-sach.epub  (chỉ nhận tệp nằm trên cùng trang web)
+// Ghi nhớ link trước khi xử lý, phòng khi app tự chuyển trang để làm mới phiên đăng nhập.
+const K_OPEN = 'pendingOpen';
+function takeOpenLink() {
+  const q = new URLSearchParams(location.search);
+  const src = q.get('mo');
+  if (src) {
+    lsSet(K_OPEN, { src, at: Date.now() });
+    q.delete('mo');
+    const rest = q.toString();
+    history.replaceState(null, '', location.pathname + (rest ? `?${rest}` : '') + location.hash);
+  }
+  const p = lsGet(K_OPEN, null);
+  if (!p || Date.now() - p.at > 5 * 60 * 1000) { localStorage.removeItem(K_OPEN); return null; }
+  return p.src;
+}
+async function openFromLink(src) {
+  let url;
+  try { url = new URL(src, location.href); } catch { url = null; }
+  if (!url || url.origin !== location.origin || !/^https?:$/.test(url.protocol)) {
+    localStorage.removeItem(K_OPEN);
+    toast('Chỉ mở được sách nằm trên cùng trang web'); return;
+  }
+  const name = decodeURIComponent(url.pathname.split('/').pop() || 'sach.epub');
+  try {
+    toast(`Đang tải “${name}”…`, null, null, 0);
+    const res = await fetch(url, { cache: 'no-cache' });
+    if (!res.ok) throw new Error(`máy chủ báo lỗi ${res.status}`);
+    const { id } = await importBuffer(await res.arrayBuffer(), name, null);
+    localStorage.removeItem(K_OPEN);
+    hideToast();
+    renderLibrary();
+    openBook(id);
+  } catch (e) {
+    localStorage.removeItem(K_OPEN);
+    console.error(e);
+    toast(`Không mở được “${name}”: ${e.message || e}`);
+  }
+}
+
 /* ================= Khởi động ================= */
+const openLink = takeOpenLink();
 db.requestPersistence();
 applyChrome();
 renderLibrary();
 updateAccountUI();
+if (openLink) openFromLink(openLink);
 sync.init(onUser).then(() => {
   const err = sync.takeLastError();
   if (err) toast(`Đăng nhập không thành công: ${err}`, null, null, 8000);
