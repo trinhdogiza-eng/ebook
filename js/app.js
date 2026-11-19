@@ -282,6 +282,9 @@ async function openBook(id) {
   $('progressSlider').disabled = true;
 
   R.book = ePub(file.data);
+  // Chạy sau hook thay thế tài nguyên của epub.js (hook đó ghi đè section.output từ bản gốc), nên đợi 1 microtask.
+  R.book.spine.hooks.serialize.register((output, section) =>
+    Promise.resolve().then(() => { section.output = sanitizeSection(section.output); }));
   R.book.loaded.navigation.then((nav) => { R.toc = nav.toc; R.flatToc = flatten(nav.toc); renderToc(); }).catch(() => {});
 
   // Chọn vị trí bắt đầu: bản mới nhất giữa máy này và đám mây
@@ -315,7 +318,9 @@ async function createRendition(cfi) {
     flow: settings.flow,
     manager: scrolled ? 'continuous' : 'default',
     spread: 'auto', minSpreadWidth: 900,
-    allowScriptedContent: false,
+    // Safari (iPhone/iPad/Mac) không chuyển sự kiện chạm/vuốt vào iframe bị sandbox thiếu "allow-scripts",
+    // nên phải bật. Script trong sách vẫn bị chặn: xem sanitizeSection() (xoá <script> + CSP script-src 'none').
+    allowScriptedContent: true,
   });
   R.rendition = rendition;
   rendition.hooks.content.register((contents) => { normalizeText(contents.document); injectStyle(contents); });
@@ -332,6 +337,21 @@ async function createRendition(cfi) {
     console.warn('Vị trí không hợp lệ, mở từ đầu', e);
     await rendition.display();
   }
+}
+
+// Không cho mã trong sách chạy (sách có thể chứa <script> hoặc onclick=...):
+// xoá script / thuộc tính on* / liên kết javascript:, và thêm CSP chặn mọi script trong trang sách.
+const CSP_META = '<meta http-equiv="Content-Security-Policy" content="script-src \'none\'; object-src \'none\'; frame-src \'none\'"/>';
+function sanitizeSection(html) {
+  if (!html) return html;
+  let out = html
+    .replace(/<script\b[\s\S]*?<\/script\s*>/gi, '')
+    .replace(/<script\b[^>]*\/>/gi, '')
+    .replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/(href|src)\s*=\s*(["'])\s*javascript:[^"']*\2/gi, '$1="#"');
+  if (/<head\b[^>]*>/i.test(out)) out = out.replace(/<head\b[^>]*>/i, (m) => m + CSP_META);
+  else out = out.replace(/<html\b[^>]*>/i, (m) => `${m}<head>${CSP_META}</head>`);
+  return out;
 }
 
 // Nhiều EPUB tiếng Việt lưu dấu dạng tổ hợp (vd "ê" + dấu sắc rời) → hiển thị dấu bị tách ("Yế u").
@@ -351,11 +371,18 @@ function injectStyle(contents) {
   const t = THEMES[settings.theme] || THEMES.light;
   const doc = contents.document;
   let style = doc.getElementById('__reader_style');
-  if (!style) { style = doc.createElement('style'); style.id = '__reader_style'; doc.head.appendChild(style); }
+  if (!style) {
+    // Cỡ chữ gốc của sách (nhiều sách đặt body cố định theo px, vd 14.6px) — đo trước khi chèn style
+    // để A+/A− phóng to/thu nhỏ theo đúng cỡ gốc đó.
+    doc.documentElement.dataset.baseFs = parseFloat(contents.window.getComputedStyle(doc.body).fontSize) || 16;
+    style = doc.createElement('style'); style.id = '__reader_style'; doc.head.appendChild(style);
+  }
+  const baseFs = Number(doc.documentElement.dataset.baseFs) || 16;
+  const bodyFs = Math.round(baseFs * settings.fontSize) / 100;
   const recolor = settings.theme !== 'light';
   style.textContent = `
     html { font-size: ${settings.fontSize}% !important; background: ${t.bg} !important; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
-    body { background: ${t.bg} !important; color: ${t.fg} !important; -webkit-text-size-adjust: none; }
+    body { font-size: ${bodyFs}px !important; background: ${t.bg} !important; color: ${t.fg} !important; -webkit-text-size-adjust: none; }
     p, li, blockquote, dd, dt, td, div { line-height: ${settings.lineHeight} !important; }
     ${recolor ? `body *:not(img):not(svg):not(image) { color: inherit !important; background-color: transparent !important; border-color: ${t.fg}33 !important; }` : ''}
     a, a * { color: ${t.link} !important; }
