@@ -27,14 +27,14 @@
         </button>
         <button id="btnCloud" class="btn" hidden>☁ <span id="cloudBtnLabel">Mở từ đám mây</span></button>
         <label class="btn primary" for="fileInput">+ Thêm sách</label>
-        <input id="fileInput" type="file" accept=".epub,application/epub+zip" multiple hidden>
+        <input id="fileInput" type="file" accept=".epub,application/epub+zip,.pdf,application/pdf" multiple hidden>
       </div>
     </header>
 
     <main class="lib-main">
       <div id="emptyState" class="empty" hidden>
         <p class="empty-title">Chưa có sách nào</p>
-        <p>Bấm <b>+ Thêm sách</b> hoặc kéo thả tệp <code>.epub</code> vào đây.</p>
+        <p>Bấm <b>+ Thêm sách</b> hoặc kéo thả tệp <code>.epub</code> / <code>.pdf</code> vào đây.</p>
       </div>
       <div id="bookGrid" class="grid"></div>
 
@@ -44,7 +44,7 @@
         <div id="remoteList" class="remote-list"></div>
       </section>
     </main>
-    <div id="dropOverlay" class="drop-overlay" hidden>Thả tệp EPUB để thêm vào thư viện</div>
+    <div id="dropOverlay" class="drop-overlay" hidden>Thả tệp EPUB hoặc PDF để thêm vào thư viện</div>
   </section>
 
   <!-- ============ TRÌNH ĐỌC ============ -->
@@ -80,18 +80,18 @@
     <aside id="settingsPanel" class="panel" hidden>
       <div class="panel-head"><b>Hiển thị</b><button class="icon" data-close="settingsPanel">✕</button></div>
       <div class="setting">
-        <span>Cỡ chữ</span>
+        <span id="fontLabel">Cỡ chữ</span>
         <div class="stepper">
           <button id="fontDown">A−</button><span id="fontSizeVal">100%</span><button id="fontUp">A+</button>
         </div>
       </div>
-      <div class="setting">
+      <div class="setting epub-only">
         <span>Giãn dòng</span>
         <div class="stepper">
           <button id="lhDown">−</button><span id="lhVal">1.5</span><button id="lhUp">+</button>
         </div>
       </div>
-      <div class="setting">
+      <div class="setting epub-only">
         <span>Phông chữ</span>
         <select id="fontFamily">
           <option value="">Theo sách</option>
