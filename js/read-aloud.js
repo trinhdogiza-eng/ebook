@@ -87,13 +87,15 @@ export const stream = {
   suspend() { try { this.ctx?.suspend(); this.out?.pause(); } catch { /* bỏ qua */ } },
   resume() { this.ensure(); },
   decode(arrayBuffer) { this.ensure(); return this.ctx.decodeAudioData(arrayBuffer); },
-  play(buffer, onEnded) {
+  // Phát buffer đúng thời điểm `at` (theo đồng hồ âm thanh) → các câu nối tiếp liền mạch, không phụ thuộc
+  // vào việc trang (bị chậm khi khoá màn hình) xử lý sự kiện "hết câu" nhanh hay chậm.
+  playAt(buffer, at, onEnded) {
     const src = this.ctx.createBufferSource();
     src.buffer = buffer;
     src.connect(this.dest);
     src.onended = () => { this.nodes.delete(src); onEnded?.(); };
     this.nodes.add(src);
-    src.start();
+    src.start(at);
     return src;
   },
   stopAll() {
@@ -249,7 +251,26 @@ export class Speaker {
 // Mỗi câu được tạo thành âm thanh (đúng tốc độ đọc ngay khi tạo → không bị méo giọng), giải mã rồi phát
 // trong luồng liền mạch ở trên → vẫn đọc tiếp khi khoá màn hình / chuyển app.
 const GTTS = 'https://texttospeech.googleapis.com/v1';
-const AHEAD = 3; // số câu chuẩn bị trước để không bị ngắt quãng
+const AHEAD = 4;      // số câu chuẩn bị trước để không bị ngắt quãng
+const SCHEDULED = 2;  // số câu xếp lịch sẵn trong luồng âm thanh
+const GAP = 0.18;     // khoảng ngừng tự nhiên giữa 2 câu (giây)
+
+// Cắt bớt khoảng lặng ở đầu/cuối câu (giọng AI thêm sẵn ~0.2–0.4s mỗi đầu → nghe rời rạc)
+function trimSilence(buffer, keep = 0.03) {
+  const d = buffer.getChannelData(0);
+  const th = 0.012;
+  let a = 0, b = d.length - 1;
+  while (a < b && Math.abs(d[a]) < th) a++;
+  while (b > a && Math.abs(d[b]) < th) b--;
+  const pad = Math.round(buffer.sampleRate * keep);
+  a = Math.max(0, a - pad);
+  b = Math.min(d.length - 1, b + pad);
+  if (a === 0 && b === d.length - 1) return buffer;
+  const len = Math.max(1, b - a + 1);
+  const res = stream.ctx.createBuffer(buffer.numberOfChannels, len, buffer.sampleRate);
+  for (let c = 0; c < buffer.numberOfChannels; c++) res.getChannelData(c).set(buffer.getChannelData(c).subarray(a, a + len));
+  return res;
+}
 
 export const GOOGLE_DEFAULT_VOICE = 'vi-VN-Wavenet-A';
 
@@ -298,7 +319,9 @@ export class CloudSpeaker extends Speaker {
   // opts thêm: getKey(), getGoogleVoice(), onError(message)
   constructor(opts) {
     super(opts);
-    this.ahead = [];
+    this.ahead = [];  // câu đang được tạo âm thanh: { seg, buf (Promise), ready, buffer, err }
+    this.sched = [];  // câu đã xếp lịch trong luồng: { seg, at, end, src }
+    this.queueTime = 0;
   }
 
   // Tạo âm thanh cho 1 câu → Promise<AudioBuffer>. Lớp con (giọng AI) thay bằng cách tạo khác.
@@ -316,7 +339,60 @@ export class CloudSpeaker extends Speaker {
     this.setupMediaSession();
     this.lockScreen();
     this.emit();
-    await this.playNext(++this.gen);
+    this.gen++;
+    await this.fill();
+  }
+
+  // Câu đang phát thật sự (theo đồng hồ âm thanh) và các câu còn lại chưa phát — dùng khi chuyển giọng
+  nowSeg() {
+    const t = stream.ctx?.currentTime || 0;
+    return (this.sched.find((s) => t < s.end) || {}).seg || this.current;
+  }
+  pendingSegs() {
+    const t = stream.ctx?.currentTime || 0;
+    const cur = this.nowSeg();
+    return [
+      ...this.sched.filter((s) => s.seg !== cur && s.at > t).map((s) => s.seg),
+      ...this.ahead.map((i) => i.seg),
+    ];
+  }
+
+  // Xếp các câu đã tạo xong vào luồng, nối liền ngay sau câu trước
+  pump() {
+    const gen = this.gen;
+    if (this.state !== 'playing') return;
+    const ctx = stream.ctx;
+    while (this.sched.length < SCHEDULED && this.ahead.length && this.ahead[0].ready) {
+      const item = this.ahead.shift();
+      if (!item.buffer) {
+        this.onError?.(item.err?.message || 'Không tạo được giọng đọc');
+        if (++this.errors >= 2) { this.stop(); return; }
+        continue;
+      }
+      this.errors = 0;
+      const buf = trimSilence(item.buffer);
+      const at = Math.max(ctx.currentTime + 0.05, this.queueTime + (this.queueTime ? GAP : 0));
+      const entry = { seg: item.seg, at, end: at + buf.duration };
+      entry.src = stream.playAt(buf, at, () => {
+        if (gen !== this.gen) return;
+        this.sched = this.sched.filter((s) => s !== entry);
+        this.pump();
+        this.checkDone();
+      });
+      this.sched.push(entry);
+      this.queueTime = entry.end;
+      // Báo "đang đọc câu này" đúng lúc nó bắt đầu (để tô sáng, lật trang khi app đang mở)
+      setTimeout(() => {
+        if (gen !== this.gen) return;
+        this.current = item.seg;
+        this.onSegment?.(item.seg);
+      }, Math.max(0, (at - ctx.currentTime) * 1000));
+    }
+    this.fill();
+    this.checkDone();
+  }
+  checkDone() {
+    if (this.state === 'playing' && this.done && !this.ahead.length && !this.sched.length && !this.filling) this.finish();
   }
 
   // Chuẩn bị trước vài câu: lấy câu từ sách và tạo âm thanh
@@ -332,33 +408,14 @@ export class CloudSpeaker extends Speaker {
         this.ahead.push(this.makeItem(seg));
       }
     })();
-    try { await this.filling; } finally { this.filling = null; }
+    try { await this.filling; } finally { this.filling = null; this.checkDone(); }
   }
   makeItem(seg) {
     const item = { seg };
+    const gen = this.gen;
     item.buf = this.synth(seg.text).catch((e) => { item.err = e; return null; });
+    item.buf.then((b) => { item.ready = true; item.buffer = b; if (gen === this.gen) this.pump(); });
     return item;
-  }
-
-  async playNext(gen) {
-    if (gen !== this.gen || this.state !== 'playing') return;
-    if (!this.ahead.length) await this.fill();
-    if (gen !== this.gen || this.state !== 'playing') return;
-    const item = this.ahead.shift();
-    if (!item) { this.finish(); return; }
-    this.fill();
-    const buf = await item.buf;
-    if (gen !== this.gen) return;
-    if (!buf) {
-      this.onError?.(item.err?.message || 'Không tạo được giọng đọc');
-      if (++this.errors >= 2) { this.stop(); return; }
-      this.playNext(gen);
-      return;
-    }
-    this.errors = 0;
-    this.current = item.seg;
-    stream.play(buf, () => { if (gen === this.gen && this.state === 'playing') this.playNext(gen); });
-    this.onSegment?.(item.seg);
   }
 
   pause() {
@@ -375,10 +432,10 @@ export class CloudSpeaker extends Speaker {
     stream.resume();
     this.lockScreen();
     this.emit();
-    if (!stream.nodes.size) this.playNext(this.gen);
+    this.pump();
   }
 
-  // Đổi tốc độ / giọng: các câu đã chuẩn bị được tạo lại theo cài đặt mới
+  // Đổi tốc độ / giọng: các câu chưa xếp lịch được tạo lại theo cài đặt mới
   refresh() {
     this.ahead = this.ahead.map(({ seg }) => this.makeItem(seg));
   }
@@ -390,6 +447,8 @@ export class CloudSpeaker extends Speaker {
     this.current = null;
     stream.stopAll();
     this.ahead = [];
+    this.sched = [];
+    this.queueTime = 0;
     if (!this.keepStream) stream.suspend();
     this.unlockScreen();
     if (!silent && was !== 'idle') this.emit('stop');
