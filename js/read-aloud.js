@@ -81,6 +81,8 @@ function silentWavUrl(seconds = 8, rate = 8000) {
   return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
 }
 
+const route = () => { try { return localStorage.getItem('audioRoute') || ''; } catch { return ''; } };
+
 export const stream = {
   ctx: null, dest: null, out: null, anchor: null, nodes: new Set(), wanted: false,
   // Phải gọi trong lúc người dùng bấm nút (lần đầu)
@@ -99,23 +101,46 @@ export const stream = {
         // "playback": bộ đệm âm thanh lớn hơn → máy bận (đang tạo giọng AI, khoá màn hình chạy nhân yếu)
         // vẫn không bị thiếu dữ liệu gây tiếng rè. Đọc sách không cần độ trễ thấp.
         try { this.ctx = new C({ latencyHint: 'playback' }); } catch { this.ctx = new C(); }
-        if (this.ctx.createMediaStreamDestination) {
-          this.dest = this.ctx.createMediaStreamDestination();
-          this.out = new Audio();
-          this.out.setAttribute('playsinline', '');
-          this.out.srcObject = this.dest.stream;
-          this.out.addEventListener('pause', () => { if (this.wanted) setTimeout(() => this.wanted && this.out.play().catch(() => {}), 300); });
-        } else {
-          this.dest = this.ctx.destination;
-        }
+        // Android: phát thẳng ra loa (bộ đệm lớn, không rè). Thẻ "mỏ neo" ở trên đã giữ app chạy ngầm nên không
+        // cần đi vòng qua luồng trực tiếp (MediaStream — bộ đệm rất nhỏ, dễ rè khi máy bận lúc mới bắt đầu đọc).
+        // Nếu máy nào phát thẳng bị dừng khi khoá màn hình → tự chuyển về cách cũ (xem watchdog bên dưới).
+        if (IS_ANDROID && route() !== 'stream') this.dest = this.ctx.destination;
+        else this.useStreamRoute();
         // Android tạm ngắt âm thanh (thông báo, cuộc gọi…) → tự chạy lại khi vẫn đang đọc
         this.ctx.onstatechange = () => {
           if (this.wanted && this.ctx.state !== 'running' && this.ctx.state !== 'closed') setTimeout(() => this.wanted && this.ctx.resume().catch(() => {}), 300);
         };
+        if (this.dest === this.ctx.destination && IS_ANDROID) this.watch();
       }
       this.ctx.resume?.().catch?.(() => {});
       this.out?.play().catch(() => {});
     } catch (e) { console.warn('Không tạo được luồng âm thanh', e); }
+  },
+  // Cách cũ: Web Audio → MediaStream → thẻ <audio> (đã thử chạy được khi khoá màn hình)
+  useStreamRoute() {
+    if (!this.ctx.createMediaStreamDestination) { this.dest = this.ctx.destination; return; }
+    this.dest = this.ctx.createMediaStreamDestination();
+    this.out = new Audio();
+    this.out.setAttribute('playsinline', '');
+    this.out.srcObject = this.dest.stream;
+    this.out.addEventListener('pause', () => { if (this.wanted) setTimeout(() => this.wanted && this.out.play().catch(() => {}), 300); });
+    if (this.wanted) this.out.play().catch(() => {});
+  },
+  // Theo dõi khi đang ẩn app: nếu đồng hồ âm thanh đứng yên dù đang đọc (máy không cho phát thẳng lúc khoá
+  // màn hình) → ghi nhớ dùng cách cũ cho máy này và báo app đọc lại từ câu đang dở.
+  watch() {
+    let last = -1, still = 0;
+    setInterval(() => {
+      if (!this.wanted || this.dest !== this.ctx.destination || !document.hidden || !this.nodes.size) { last = -1; still = 0; return; }
+      const t = this.ctx.currentTime;
+      still = t === last ? still + 1 : 0;
+      last = t;
+      if (still >= 3) { // ~6 giây không phát
+        try { localStorage.setItem('audioRoute', 'stream'); } catch { /* bỏ qua */ }
+        this.useStreamRoute();
+        this.onRouteChange?.();
+      }
+    }, 2000);
   },
   suspend() { this.wanted = false; try { this.ctx?.suspend(); this.out?.pause(); this.anchor?.pause(); } catch { /* bỏ qua */ } },
   resume() { this.ensure(); },
@@ -641,8 +666,15 @@ async function aiSession(voiceId) {
   return piperSession;
 }
 // Khởi động sẵn giọng AI (đọc mô hình vào bộ nhớ) lúc app còn mở → khi khoá màn hình có tiếng ngay
+let warmed = null;
 export function aiWarmup(voiceId) {
-  const run = piperChain.then(() => aiSession(voiceId));
+  // Nạp mô hình rồi chạy thử 1 câu ngắn: lần tạo giọng đầu tiên luôn chậm & nặng máy nhất → làm trước,
+  // không để trùng lúc đang phát (gây rè ở những giây đầu).
+  const run = piperChain.then(async () => {
+    const s = await aiSession(voiceId);
+    if (warmed !== voiceId) { warmed = voiceId; try { await s.predict('Xin chào.'); } catch { /* bỏ qua */ } }
+    return s;
+  });
   piperChain = run.catch(() => {});
   return run;
 }
