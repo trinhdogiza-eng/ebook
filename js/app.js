@@ -9,7 +9,7 @@ import {
 } from './read-aloud.js';
 
 /* global ePub */
-const APP_VERSION = '2.10';
+const APP_VERSION = '2.11';
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -683,7 +683,7 @@ async function saveProgress(chapter, quiet) {
       ...(R.meta.source ? { source: R.meta.source } : {}),
     },
   };
-  if (quiet) { if (!R.pushTimer) R.pushTimer = setTimeout(flushPush, 20000); return; }
+  if (quiet) { if (!R.pushTimer) R.pushTimer = setTimeout(flushPush, 10000); return; }
   clearTimeout(R.pushTimer);
   R.pushTimer = setTimeout(flushPush, 1500);
 }
@@ -1413,11 +1413,13 @@ $('spreadMode').onchange = (e) => changeSetting({ spread: e.target.value });
 document.querySelectorAll('.sw').forEach((b) => { b.onclick = () => changeSetting({ theme: b.dataset.theme }); });
 
 // Lưu ngay khi rời app / chuyển tab / khoá màn hình
+// Trang vừa bị hệ thống cho "ngủ" rồi chạy lại (Android) → đọc tiếp ngay và gửi vị trí đang đọc
+document.addEventListener('resume', () => { if (speaker?.state === 'playing') speaker.kick?.(); flushPush(); });
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') flushPush();
   else {
     sync.resume(!R.id).then(updateAccountUI).catch(() => {}); // quay lại app: lấy tiến độ mới
-    if (speaker?.state === 'playing') speaker.lockScreen(); // khoá màn hình bị nhả khi ẩn app
+    if (speaker?.state === 'playing') { speaker.lockScreen(); speaker.kick?.(); } // khoá màn hình bị nhả khi ẩn app
     if (ttsNeedsResync !== false && R.rendition) { // trong lúc ẩn đã đọc sang chương khác → nhảy tới đó
       const sec = R.book?.spine.get(ttsNeedsResync);
       ttsNeedsResync = false;
