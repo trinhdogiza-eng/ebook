@@ -70,7 +70,9 @@ export const stream = {
     try {
       if (!this.ctx) {
         const C = window.AudioContext || window.webkitAudioContext;
-        this.ctx = new C();
+        // "playback": bộ đệm âm thanh lớn hơn → máy bận (đang tạo giọng AI, khoá màn hình chạy nhân yếu)
+        // vẫn không bị thiếu dữ liệu gây tiếng rè. Đọc sách không cần độ trễ thấp.
+        try { this.ctx = new C({ latencyHint: 'playback' }); } catch { this.ctx = new C(); }
         if (this.ctx.createMediaStreamDestination) {
           this.dest = this.ctx.createMediaStreamDestination();
           this.out = new Audio();
@@ -543,7 +545,28 @@ let piperVoice = null;
 let piperConfig = null; // cấu hình giọng (để chỉnh tốc độ nói)
 let piperBaseLength = 1;
 let piperChain = Promise.resolve();
-const loadPiper = async () => (piper ||= await import(PIPER));
+const ORT_ESM = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.27.0/wasm/+esm'; // đúng mô-đun gói Piper dùng
+// Gói Piper cho onnxruntime chạy bằng TẤT CẢ nhân CPU (navigator.hardwareConcurrency). Trên Android khi khoá màn
+// hình, app bị dồn sang các nhân yếu → tạo giọng chiếm hết CPU, luồng phát âm thanh bị thiếu → tiếng rè rè.
+// Giới hạn số luồng và tắt chế độ "chờ quay vòng" (spinning) để luôn chừa CPU cho việc phát âm thanh.
+const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+export const AI_THREADS = Math.max(1, Math.min(isAndroid ? 2 : 4, (navigator.hardwareConcurrency || 2) - 2));
+async function tameOrt() {
+  try {
+    const m = await import(ORT_ESM);
+    const ort = m.default || m;
+    const IS = ort.InferenceSession;
+    if (!IS || IS.__tamed) return;
+    const create = IS.create.bind(IS);
+    IS.create = (model, opts = {}) => {
+      if (ort.env?.wasm) ort.env.wasm.numThreads = AI_THREADS;
+      const extra = { ...(opts.extra || {}), session: { ...(opts.extra?.session || {}), 'intra_op.allow_spinning': '0', 'inter_op.allow_spinning': '0' } };
+      return create(model, { ...opts, extra });
+    };
+    IS.__tamed = true;
+  } catch (e) { console.warn('Không giới hạn được số luồng giọng AI', e); }
+}
+const loadPiper = async () => { if (!piper) { await tameOrt(); piper = await import(PIPER); } return piper; };
 
 // Đã tải giọng về máy chưa
 export async function aiVoiceStored(voiceId) {
