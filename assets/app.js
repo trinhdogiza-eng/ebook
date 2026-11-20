@@ -71,10 +71,8 @@
 
   // ---------- Pages ----------
   function pageHome() {
-    const hot = [...BOOKS].sort((a, b) => b.views - a.views);
-    const fresh = [...BOOKS].sort((a, b) => b.year - a.year);
-    const recent = store.get("history", []).map((h) => ({ h, b: byId(h.id) })).filter((x) => x.b).slice(0, 6);
-    const totalCh = BOOKS.reduce((s, b) => s + (b.chapters || []).length, 0);
+    const fresh = [...BOOKS].sort(byNew);
+    const recent = store.get("history", []).map((h) => ({ h, b: byId(h.id) })).filter((x) => x.b && (x.b.chapters || []).length).slice(0, 6);
     const reading = BOOKS.filter((b) => appInfo(b) && treeLink(b)).sort((a, b) => appInfo(b).updatedAt - appInfo(a).updatedAt).slice(0, 6);
     return `
       <section class="hero">
@@ -84,11 +82,11 @@
           <p style="margin-top:-6px"><a class="btn primary" href="app/">📖 Mở app Tree Ebook</a></p>
           <div class="hero-stats">
             <div><b>${BOOKS.length}</b><span>đầu sách</span></div>
-            <div><b>${totalCh}</b><span>chương</span></div>
             <div><b>${CATS.length}</b><span>thể loại</span></div>
+            <div><b>100%</b><span>hết bản quyền</span></div>
           </div>
         </div>
-        <div class="hero-covers">${hot.slice(0, 3).map((b) => `<a href="#/sach/${b.id}" style="display:contents">${cover(b)}</a>`).join("")}</div>
+        <div class="hero-covers">${fresh.slice(0, 3).map((b) => `<a href="#/sach/${b.id}" style="display:contents">${cover(b)}</a>`).join("")}</div>
       </section>
 
       ${reading.length ? `<section class="section"><div class="section-head"><h2>Đang đọc trong app</h2><a href="app/">Mở app →</a></div>
@@ -99,25 +97,24 @@
         <div class="grid">${recent.map(({ h, b }) => `<a class="card" href="#/doc/${b.id}/${h.ch}">${cover(b)}<span class="card-title">${esc(b.title)}</span><span class="card-meta">Chương ${h.ch + 1}/${(b.chapters || []).length}</span></a>`).join("")}</div></section>` : ""}
 
       <section class="section">
-        <div class="section-head"><h2>Thể loại</h2></div>
-        <div class="tags">${CATS.map((c) => `<a class="chip" href="#/the-loai/${c.id}">${esc(c.name)}</a>`).join("")}</div>
+        <div class="section-head"><h2>Thể loại</h2><a href="#/sach-moi">Tất cả sách →</a></div>
+        <div class="tags">${CATS.map((c) => `<a class="chip" href="#/the-loai/${c.id}">${esc(c.name)} <small>${BOOKS.filter((b) => b.category === c.id).length}</small></a>`).join("")}</div>
       </section>
 
-      <div class="two-col">
-        <section class="section">
-          <div class="section-head"><h2>Sách mới cập nhật</h2><a href="#/sach-moi">Xem tất cả →</a></div>
-          ${grid(fresh.slice(0, 8))}
-        </section>
-        <section class="section">
-          <div class="section-head"><h2>Xem nhiều nhất</h2></div>
-          ${rankList(hot.slice(0, 8))}
-        </section>
-      </div>`;
+      ${CATS.map((c) => { const list = fresh.filter((b) => b.category === c.id); return list.length ? `
+      <section class="section">
+        <div class="section-head"><h2>${esc(c.name)}</h2>${list.length > 6 ? `<a href="#/the-loai/${c.id}">Xem tất cả ${list.length} →</a>` : ""}</div>
+        ${grid(list.slice(0, 6))}
+      </section>` : ""; }).join("")}
+
+      <p class="muted" style="font-size:13px">Kho sách công khai chỉ gồm các tác phẩm đã hết thời hạn bảo hộ bản quyền theo luật Việt Nam (tác giả mất trên 50 năm, bản in không có phần biên soạn mới còn bản quyền).</p>`;
   }
+  // Sách mới thêm trước, rồi theo tên
+  function byNew(a, b) { return String(b.added || "").localeCompare(String(a.added || "")) || a.title.localeCompare(b.title, "vi"); }
 
   function listPage(title, list, crumb) {
     const sort = store.get("sort", "new");
-    const sorted = [...list].sort(sort === "views" ? (a, b) => b.views - a.views : sort === "rating" ? (a, b) => b.rating - a.rating : sort === "az" ? (a, b) => a.title.localeCompare(b.title, "vi") : (a, b) => b.year - a.year);
+    const sorted = [...list].sort(sort === "author" ? (a, b) => a.author.localeCompare(b.author, "vi") : sort === "old" ? (a, b) => (a.year || 9999) - (b.year || 9999) : sort === "az" ? (a, b) => a.title.localeCompare(b.title, "vi") : byNew);
     return `
       <div class="crumbs"><a href="#/">Trang chủ</a> › ${esc(crumb || title)}</div>
       <h1 class="page-title">${esc(title)}</h1>
@@ -125,8 +122,8 @@
         <span class="muted">${list.length} sách</span><span class="spacer"></span>
         <select id="sortSel" aria-label="Sắp xếp">
           <option value="new"${sort === "new" ? " selected" : ""}>Mới nhất</option>
-          <option value="views"${sort === "views" ? " selected" : ""}>Xem nhiều</option>
-          <option value="rating"${sort === "rating" ? " selected" : ""}>Đánh giá cao</option>
+          <option value="old"${sort === "old" ? " selected" : ""}>Theo năm</option>
+          <option value="author"${sort === "author" ? " selected" : ""}>Theo tác giả</option>
           <option value="az"${sort === "az" ? " selected" : ""}>Tên A → Z</option>
         </select>
       </div>
@@ -209,10 +206,10 @@
           <div class="by">Tác giả: <a href="#/tim/${encodeURIComponent(b.author)}">${esc(b.author)}</a></div>
           <dl class="facts">
             <div><dt>Thể loại</dt><dd><a href="#/the-loai/${b.category}">${esc(catName(b.category))}</a></dd></div>
-            <div><dt>Trạng thái</dt><dd>${esc(b.status)}</dd></div>
-            <div><dt>Số chương</dt><dd>${chs.length}</dd></div>
-            <div><dt>Lượt xem</dt><dd>${fmtNum(b.views)}</dd></div>
-            <div><dt>Đánh giá</dt><dd><span class="stars">${stars(b.rating)}</span> ${b.rating ?? ""}</dd></div>
+            ${b.year ? `<div><dt>Năm</dt><dd>${esc(b.year)}</dd></div>` : ""}
+            ${b.edition ? `<div><dt>Bản in</dt><dd>${esc(b.edition)}</dd></div>` : ""}
+            ${chs.length ? `<div><dt>Số chương</dt><dd>${chs.length}</dd></div>` : ""}
+            <div><dt>Bản quyền</dt><dd>Đã hết hạn bảo hộ</dd></div>
           </dl>
           ${appInfo(b) ? `<div class="inapp">Trong app trên máy này <span class="bar"><i style="width:${pctText(appInfo(b).percent)}"></i></span> ${pctText(appInfo(b).percent)}</div>` : ""}
           <div class="actions">
