@@ -2,59 +2,252 @@
 <html lang="vi">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Tree Ebook — Đọc &amp; tải sách, đồng bộ mọi thiết bị</title>
-  <meta name="description" content="Tree Ebook của Trình Đỗ: kho sách đọc ngay trên trình duyệt, tải EPUB, nghe đọc to và đồng bộ đúng câu đang đọc giữa điện thoại, máy tính bảng và máy tính.">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Tree Ebook — App đọc sách, nghe đọc to, đồng bộ mọi thiết bị</title>
+  <meta name="description" content="Tree Ebook 2.12 của Trình Đỗ: đọc EPUB, PDF, MOBI, nghe đọc to giọng tự nhiên và đọc tiếp đúng câu đang dở trên máy tính, Android, iPhone, iPad và Mac. Miễn phí, không quảng cáo.">
   <meta name="author" content="Trình Đỗ">
-  <meta name="theme-color" content="#f6f4ef">
+  <meta name="theme-color" content="#14382a">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-180.png">
-  <meta property="og:title" content="Tree Ebook — Đọc & tải sách">
-  <meta property="og:description" content="Đọc sách trên trình duyệt, tải EPUB, đồng bộ vị trí đọc giữa các thiết bị.">
-  <meta property="og:image" content="icons/icon-512.png">
+  <meta property="og:title" content="Tree Ebook — App đọc sách của Trình Đỗ">
+  <meta property="og:description" content="Đọc sách, nghe đọc to, đồng bộ đúng câu đang đọc trên mọi thiết bị.">
+  <meta property="og:image" content="https://dvt-treebook.com/icons/icon-512.png">
+  <meta property="og:url" content="https://dvt-treebook.com/">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Literata:opsz,wght@7..72,400;7..72,600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="assets/style.css?v=20261120c">
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=Literata:opsz,wght@7..72,400;7..72,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="landing.css?v=20261120a">
+  <script>
+    // Link cũ của kho sách (dvt-treebook.com/#/...) → trang kho sách mới
+    if (/^#\//.test(location.hash)) location.replace('kho-sach.html' + location.hash);
+  </script>
 </head>
 <body>
-  <header class="topbar">
-    <div class="wrap topbar-inner">
-      <a class="brand" href="#/">
-        <img class="brand-mark" src="icons/icon.svg" alt="" width="34" height="34">
-        <span class="brand-name">Tree Ebook<small>của Trình Đỗ</small></span>
+  <header class="nav" id="top">
+    <div class="wrap nav-inner">
+      <a class="brand" href="#top" aria-label="Tree Ebook — về đầu trang">
+        <img src="icons/icon-192.png" alt="" width="36" height="36">
+        <span>Tree Ebook<small>của Trình Đỗ</small></span>
       </a>
-      <form class="search" id="searchForm" role="search">
-        <input id="searchInput" type="search" placeholder="Tìm tên sách, tác giả…" aria-label="Tìm kiếm" autocomplete="off">
-        <button type="submit" aria-label="Tìm">
-          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M10 2a8 8 0 0 1 6.32 12.9l5.39 5.4-1.41 1.4-5.4-5.39A8 8 0 1 1 10 2Zm0 2a6 6 0 1 0 0 12 6 6 0 0 0 0-12Z"/></svg>
-        </button>
-      </form>
-      <nav class="topnav">
-        <button class="nav-btn" id="catToggle" aria-expanded="false">Thể loại ▾</button>
-        <a class="nav-btn" href="#/gioi-thieu">Giới thiệu truyện</a>
-        <a class="nav-btn" href="#/tu-sach">Tủ sách</a>
-        <a class="nav-btn" href="#/rieng" title="Sách trong Google Drive của bạn — chỉ bạn thấy">🔒 Riêng</a>
-        <a class="nav-btn app-link" href="app/">📖 Mở app</a>
-        <button class="nav-btn icon" id="themeToggle" aria-label="Đổi giao diện sáng/tối">◐</button>
+      <nav class="nav-links" aria-label="Mục chính">
+        <a href="#tinh-nang">Tính năng</a>
+        <a href="#cai-dat">Cài đặt</a>
+        <a href="#hoi-dap">Hỏi đáp</a>
+        <a href="kho-sach.html">Kho sách</a>
       </nav>
+      <a class="btn btn-primary btn-sm" href="https://app.dvt-treebook.com/">Mở app</a>
     </div>
-    <div class="catmenu" id="catMenu" hidden></div>
   </header>
 
-  <main id="app" class="wrap" tabindex="-1"></main>
+  <main>
+    <!-- ===== Hero ===== -->
+    <section class="hero">
+      <div class="wrap hero-inner">
+        <div class="hero-copy">
+          <span class="pill">Phiên bản 2.12 · Miễn phí · Không quảng cáo</span>
+          <h1>Đọc sách, nghe đọc to,<br><em>đọc tiếp đúng câu</em> trên mọi thiết bị.</h1>
+          <p class="lead">Tree Ebook mở EPUB, PDF và sách Kindle ngay trên trình duyệt, đọc to bằng giọng tự nhiên, và nhớ chính xác câu bạn đang đọc — chuyển từ điện thoại sang máy tính là đọc tiếp liền mạch.</p>
+          <div class="cta">
+            <a class="btn btn-primary btn-lg" href="https://app.dvt-treebook.com/">Mở Tree Ebook</a>
+            <a class="btn btn-ghost btn-lg" href="#cai-dat">Cài lên thiết bị</a>
+          </div>
+          <ul class="platforms" aria-label="Chạy trên">
+            <li>Windows</li><li>Android</li><li>iPhone &amp; iPad</li><li>Mac</li>
+          </ul>
+        </div>
+
+        <!-- Hình minh hoạ app trên điện thoại -->
+        <div class="hero-art" aria-hidden="true">
+          <div class="phone">
+            <div class="phone-notch"></div>
+            <div class="screen">
+              <div class="scr-top"><span>‹</span><b>Truyện Kiều<small>Nguyễn Du</small></b><span>☰ Aa</span></div>
+              <div class="scr-page">
+                <p>Trăm năm trong cõi người ta,</p>
+                <p>Chữ tài chữ mệnh khéo là ghét nhau.</p>
+                <p class="hl">Trải qua một cuộc bể dâu,</p>
+                <p>Những điều trông thấy mà đau đớn lòng.</p>
+                <p>Lạ gì bỉ sắc tư phong,</p>
+                <p>Trời xanh quen thói má hồng đánh ghen.</p>
+                <p>Cảo thơm lần giở trước đèn,</p>
+                <p>Phong tình cổ lục còn truyền sử xanh.</p>
+              </div>
+              <div class="scr-player">
+                <button tabindex="-1">❚❚</button>
+                <div class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+                <span class="rate">1.5×</span>
+              </div>
+              <div class="scr-bar"><i style="width:34%"></i></div>
+            </div>
+          </div>
+          <div class="float-card sync">
+            <span class="dot"></span>
+            <div><b>Đã đồng bộ</b><small>iPhone · câu 3, trang 1</small></div>
+          </div>
+          <div class="float-card voice">🔊 <div><b>Đang đọc to</b><small>tiếp tục khi khoá màn hình</small></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Tính năng ===== -->
+    <section class="section" id="tinh-nang">
+      <div class="wrap">
+        <div class="section-head">
+          <span class="eyebrow">Tính năng</span>
+          <h2>Mọi thứ cần để đọc, gọn trong một app</h2>
+          <p>Không cần tài khoản riêng, không cài phần mềm nặng. Sách nằm trên máy của bạn, vị trí đọc nằm trong Google Drive của bạn.</p>
+        </div>
+        <div class="features">
+          <article class="feature"><div class="ic">📚</div><h3>Đọc mọi định dạng</h3><p>EPUB, PDF và sách Kindle (MOBI, AZW3, PRC). Lật trang mượt, chỉnh cỡ chữ, phông, giãn dòng và màu nền.</p></article>
+          <article class="feature"><div class="ic">🔊</div><h3>Nghe đọc to tự nhiên</h3><p>Đọc bằng giọng tiếng Việt, mặc định tốc độ 1.5×, ngắt nghỉ theo dấu câu, tự lật trang theo câu đang đọc.</p></article>
+          <article class="feature"><div class="ic">🌙</div><h3>Nghe cả khi khoá màn hình</h3><p>Trên Android, giọng AI tiếp tục đọc khi tắt màn hình hay mở app khác — như nghe sách nói.</p></article>
+          <article class="feature"><div class="ic">🔄</div><h3>Đồng bộ đúng câu</h3><p>Đọc dở trên điện thoại, mở máy tính là tới đúng trang, đúng câu — câu đó được tô sáng để bạn đọc tiếp ngay.</p></article>
+          <article class="feature"><div class="ic">☁️</div><h3>Mở sách từ Google Drive</h3><p>Duyệt thư mục Drive, mở sách trực tiếp; máy khác thấy sách đang đọc và tải về chỉ bằng một chạm.</p></article>
+          <article class="feature"><div class="ic">✈️</div><h3>Chạy cả khi không có mạng</h3><p>Sau lần mở đầu, app và sách đã thêm vẫn đọc được ngoại tuyến. Có mạng trở lại là tự đồng bộ.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Cài đặt ===== -->
+    <section class="section section-alt" id="cai-dat">
+      <div class="wrap">
+        <div class="section-head">
+          <span class="eyebrow">Cài đặt</span>
+          <h2>Cài Tree Ebook lên thiết bị của bạn</h2>
+          <p>Tree Ebook là ứng dụng web: cài từ trình duyệt trong vài giây, có biểu tượng riêng, mở toàn màn hình như app thật và tự cập nhật.</p>
+        </div>
+
+        <div class="tabs" role="tablist" aria-label="Chọn thiết bị">
+          <button role="tab" id="tab-windows" aria-controls="p-windows" data-os="windows"><span class="tab-ic">🖥️</span>Máy tính Windows</button>
+          <button role="tab" id="tab-android" aria-controls="p-android" data-os="android"><span class="tab-ic">🤖</span>Android</button>
+          <button role="tab" id="tab-ios" aria-controls="p-ios" data-os="ios"><span class="tab-ic">📱</span>iPhone &amp; iPad</button>
+          <button role="tab" id="tab-mac" aria-controls="p-mac" data-os="mac"><span class="tab-ic">💻</span>Mac</button>
+        </div>
+        <p class="detected" id="detected" hidden></p>
+
+        <!-- Windows -->
+        <div class="panel" role="tabpanel" id="p-windows" aria-labelledby="tab-windows">
+          <div class="panel-main">
+            <h3>Máy tính Windows <span class="req">Microsoft Edge hoặc Google Chrome</span></h3>
+            <ol class="steps">
+              <li><b>Mở Tree Ebook</b> bằng Edge hoặc Chrome: <a href="https://app.dvt-treebook.com/">app.dvt-treebook.com</a></li>
+              <li><b>Bấm biểu tượng cài đặt</b> <span class="kbd">⊕</span> ở cuối thanh địa chỉ.<br><span class="muted">Hoặc: Edge → menu <span class="kbd">⋯</span> → <i>Ứng dụng</i> → <i>Cài đặt trang web này dưới dạng ứng dụng</i>. Chrome → menu <span class="kbd">⋮</span> → <i>Truyền, lưu và chia sẻ</i> → <i>Cài đặt trang dưới dạng ứng dụng</i>.</span></li>
+              <li><b>Bấm “Cài đặt”.</b> Tree Ebook xuất hiện trong menu Start và có thể ghim ra thanh tác vụ.</li>
+            </ol>
+            <a class="btn btn-primary" href="https://app.dvt-treebook.com/">Mở app để cài</a>
+          </div>
+          <aside class="panel-side">
+            <div class="qr-box"><div class="qr" data-qr></div><span>Cài cả lên điện thoại: quét mã này</span></div>
+            <div class="tip"><b>Mẹo</b>Kéo thả file EPUB, PDF vào cửa sổ app để thêm sách nhanh.</div>
+          </aside>
+        </div>
+
+        <!-- Android -->
+        <div class="panel" role="tabpanel" id="p-android" aria-labelledby="tab-android" hidden>
+          <div class="panel-main">
+            <h3>Android <span class="req">Google Chrome</span></h3>
+            <ol class="steps">
+              <li><b>Mở Chrome</b> và vào <a href="https://app.dvt-treebook.com/">app.dvt-treebook.com</a></li>
+              <li><b>Bấm menu</b> <span class="kbd">⋮</span> ở góc trên bên phải.</li>
+              <li><b>Chọn “Cài đặt ứng dụng”</b> (một số máy ghi <i>Thêm vào màn hình chính</i>) → <b>Cài đặt</b>.</li>
+              <li><b>Mở Tree Ebook</b> từ biểu tượng cây trên màn hình chính hoặc trong danh sách ứng dụng.</li>
+            </ol>
+            <a class="btn btn-primary" href="https://app.dvt-treebook.com/">Mở app để cài</a>
+          </div>
+          <aside class="panel-side">
+            <div class="qr-box"><div class="qr" data-qr></div><span>Quét bằng camera điện thoại</span></div>
+            <div class="tip"><b>Nghe khi khoá màn hình</b>Trong app, bấm 🔊 rồi tắt màn hình — giọng đọc vẫn tiếp tục.</div>
+          </aside>
+        </div>
+
+        <!-- iOS -->
+        <div class="panel" role="tabpanel" id="p-ios" aria-labelledby="tab-ios" hidden>
+          <div class="panel-main">
+            <h3>iPhone &amp; iPad <span class="req">Safari</span></h3>
+            <ol class="steps">
+              <li><b>Mở Safari</b> và vào <a href="https://app.dvt-treebook.com/">app.dvt-treebook.com</a></li>
+              <li><b>Bấm nút Chia sẻ</b> <span class="kbd">⎙</span> (ô vuông có mũi tên lên) ở thanh dưới cùng — trên iPad ở góc trên.</li>
+              <li><b>Kéo xuống, chọn “Thêm vào MH chính”</b> → bấm <b>Thêm</b>.</li>
+              <li><b>Mở Tree Ebook</b> từ biểu tượng cây trên màn hình chính.</li>
+            </ol>
+            <a class="btn btn-primary" href="https://app.dvt-treebook.com/">Mở app để cài</a>
+          </div>
+          <aside class="panel-side">
+            <div class="qr-box"><div class="qr" data-qr></div><span>Quét bằng Camera, mở bằng Safari</span></div>
+            <div class="tip"><b>Lưu ý</b>Trên iPhone, Apple tạm dừng đọc to khi khoá màn hình. Khi mở app lên, bấm 🔊 để nghe tiếp.</div>
+          </aside>
+        </div>
+
+        <!-- Mac -->
+        <div class="panel" role="tabpanel" id="p-mac" aria-labelledby="tab-mac" hidden>
+          <div class="panel-main">
+            <h3>Mac <span class="req">Safari (macOS Sonoma trở lên), Chrome hoặc Edge</span></h3>
+            <ol class="steps">
+              <li><b>Mở Tree Ebook</b>: <a href="https://app.dvt-treebook.com/">app.dvt-treebook.com</a></li>
+              <li><b>Safari:</b> menu <i>Tệp</i> (File) → <b>Thêm vào Dock</b> → <b>Thêm</b>.<br><span class="muted"><b>Chrome / Edge:</b> bấm biểu tượng cài đặt <span class="kbd">⊕</span> ở thanh địa chỉ → <b>Cài đặt</b>.</span></li>
+              <li><b>Mở Tree Ebook</b> từ Dock hoặc Launchpad như mọi ứng dụng khác.</li>
+            </ol>
+            <a class="btn btn-primary" href="https://app.dvt-treebook.com/">Mở app để cài</a>
+          </div>
+          <aside class="panel-side">
+            <div class="qr-box"><div class="qr" data-qr></div><span>Cài cả lên iPhone: quét mã này</span></div>
+            <div class="tip"><b>Mẹo</b>Dùng cùng tài khoản Google Drive với điện thoại để đọc tiếp đúng câu trên Mac.</div>
+          </aside>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 3 bước ===== -->
+    <section class="section">
+      <div class="wrap">
+        <div class="section-head">
+          <span class="eyebrow">Bắt đầu</span>
+          <h2>Đọc trong 3 bước</h2>
+        </div>
+        <ol class="flow">
+          <li><span class="num">1</span><h3>Cài app</h3><p>Cài Tree Ebook theo hướng dẫn cho thiết bị của bạn ở trên.</p></li>
+          <li><span class="num">2</span><h3>Bật đồng bộ</h3><p>Bấm <b>Đồng bộ</b> → đăng nhập Google Drive. Dùng cùng một tài khoản trên mọi máy.</p></li>
+          <li><span class="num">3</span><h3>Thêm sách &amp; đọc</h3><p>Bấm <b>+ Thêm sách</b> hoặc <b>☁ Mở từ Google Drive</b>, rồi bấm 🔊 để nghe đọc to.</p></li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ===== Hỏi đáp ===== -->
+    <section class="section section-alt" id="hoi-dap">
+      <div class="wrap narrow">
+        <div class="section-head">
+          <span class="eyebrow">Hỏi đáp</span>
+          <h2>Câu hỏi thường gặp</h2>
+        </div>
+        <div class="faq">
+          <details open><summary>Tree Ebook có mất phí không?</summary><p>Không. Tree Ebook miễn phí, không quảng cáo, không cần tạo tài khoản riêng.</p></details>
+          <details><summary>Sách và dữ liệu của tôi được lưu ở đâu?</summary><p>File sách được lưu ngay trên thiết bị của bạn. Vị trí đang đọc được lưu trong một thư mục ẩn trên chính Google Drive của bạn — chỉ tài khoản của bạn đọc được.</p></details>
+          <details><summary>Vì sao trên iPhone giọng đọc dừng khi khoá màn hình?</summary><p>Apple không cho ứng dụng web phát giọng đọc khi màn hình khoá. Trên Android, Windows và Mac, Tree Ebook vẫn đọc tiếp bình thường.</p></details>
+          <details><summary>Có dùng được khi không có mạng không?</summary><p>Có. Sau lần mở đầu tiên, app và các cuốn đã thêm đọc được ngoại tuyến. Khi có mạng lại, vị trí đọc tự đồng bộ.</p></details>
+          <details><summary>Làm sao cập nhật lên bản mới?</summary><p>App tự cập nhật mỗi khi bạn mở lúc có mạng. Phiên bản hiện tại ghi ở cuối bảng <b>Aa</b> trong màn hình đọc.</p></details>
+          <details><summary>Tôi có thể đọc những định dạng nào?</summary><p>EPUB, PDF và sách Kindle không khoá bản quyền (MOBI, AZW3, AZW, PRC — được tự chuyển sang EPUB khi mở).</p></details>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== CTA cuối ===== -->
+    <section class="cta-band">
+      <div class="wrap cta-band-inner">
+        <img src="icons/icon-192.png" alt="" width="72" height="72">
+        <div><h2>Sẵn sàng đọc?</h2><p>Mở Tree Ebook ngay trên trình duyệt — cài lên máy chỉ mất vài giây.</p></div>
+        <a class="btn btn-light btn-lg" href="https://app.dvt-treebook.com/">Mở Tree Ebook</a>
+      </div>
+    </section>
+  </main>
 
   <footer class="footer">
-    <div class="wrap">
-      <p><strong>Tree Ebook</strong> của Trình Đỗ — đọc sách, nghe đọc to, đồng bộ vị trí đọc qua Google Drive. <a class="accent" href="app/">Mở app đọc sách →</a></p>
-      <p class="muted">Chỉ đăng tải tác phẩm bạn có quyền chia sẻ (tự sáng tác, phạm vi công cộng hoặc đã được tác giả cho phép).</p>
+    <div class="wrap footer-inner">
+      <div class="brand small"><img src="icons/icon-192.png" alt="" width="28" height="28"><span>Tree Ebook<small>của Trình Đỗ</small></span></div>
+      <nav aria-label="Liên kết cuối trang"><a href="https://app.dvt-treebook.com/">Mở app</a><a href="#cai-dat">Cài đặt</a><a href="kho-sach.html">Kho sách</a><a href="kho-sach.html#/gioi-thieu">Giới thiệu truyện</a></nav>
+      <p class="muted">© 2026 Trình Đỗ · Phiên bản 2.12</p>
     </div>
   </footer>
 
-  <div class="toast" id="toast" role="status" aria-live="polite"></div>
-
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-  <script src="data/library.js?v=20261120c"></script>
-  <script src="data/gioi-thieu.js?v=20261120c"></script>
-  <script src="assets/app.js?v=20261120c"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+  <script src="landing.js?v=20261120a"></script>
 </body>
 </html>
