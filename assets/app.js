@@ -341,6 +341,41 @@
     cleanup.push(() => removeEventListener("scroll", onScroll));
   }
 
+  // ---------- Giới thiệu truyện: lời giới thiệu ngắn + link tới nơi đăng / phát hành chính chủ ----------
+  const INTROS = window.INTROS || [];
+  const ig = { cat: "", q: "" };
+  function pageIntro() {
+    document.title = "Giới thiệu truyện | Tree Ebook";
+    return `<div class="crumbs"><a href="#/">Trang chủ</a> › Giới thiệu truyện</div>
+      <h1 class="page-title">Giới thiệu truyện</h1>
+      <p class="muted" style="margin-top:0">Những truyện hay nên đọc, kèm link tới <b>nơi đăng gốc của tác giả</b> hoặc <b>bản tiếng Việt có bản quyền</b>. Đọc ở nguồn chính chủ là cách ủng hộ tác giả và người dịch.</p>
+      <div id="intro"></div>`;
+  }
+  function renderIntro() {
+    const box = $("#intro"); if (!box) return;
+    const cats = [...new Set(INTROS.map((b) => b.group))];
+    const n = norm(ig.q);
+    const list = INTROS.filter((b) => (!ig.cat || b.group === ig.cat) && (!n || norm([b.title, b.author, b.orig || "", b.group].join(" ")).includes(n)));
+    const counts = {}; INTROS.forEach((b) => { counts[b.group] = (counts[b.group] || 0) + 1; });
+    box.innerHTML = `
+      <div class="toolbar"><input id="introQ" type="search" placeholder="Lọc theo tên truyện, tác giả…" value="${esc(ig.q)}" class="filter-input"></div>
+      <div class="tags" style="margin-bottom:18px"><button class="chip${ig.cat ? "" : " active"}" data-icat="">Tất cả <small>${INTROS.length}</small></button>${cats.map((c) => `<button class="chip${ig.cat === c ? " active" : ""}" data-icat="${esc(c)}">${esc(c)} <small>${counts[c]}</small></button>`).join("")}</div>
+      <div class="intro-list">${list.map((b) => `
+        <article class="intro-item">
+          ${cover({ id: b.id, title: b.title, author: b.author })}
+          <div>
+            <h3>${esc(b.title)}</h3>
+            <div class="by">${esc(b.author)}${b.orig ? ` · <span lang="zh">${esc(b.orig)}</span>` : ""} · <a href="#" data-icat="${esc(b.group)}">${esc(b.group)}</a></div>
+            <p>${esc(b.summary)}</p>
+            <div class="intro-links">${b.links.map((l, i) => `<a class="btn${i ? "" : " primary"} small" href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)} ↗</a>`).join("")}</div>
+            ${b.note ? `<p class="muted small-note">${esc(b.note)}</p>` : ""}
+          </div>
+        </article>`).join("") || `<div class="empty"><b>Không có truyện nào</b>Thử từ khoá hoặc thể loại khác.</div>`}</div>`;
+    box.querySelectorAll("[data-icat]").forEach((el) => el.onclick = (e) => { e.preventDefault(); ig.cat = el.dataset.icat; renderIntro(); });
+    const qi = $("#introQ");
+    qi.oninput = () => { ig.q = qi.value; const p = qi.selectionStart; renderIntro(); const q2 = $("#introQ"); q2.focus(); q2.setSelectionRange(p, p); };
+  }
+
   // ---------- Tủ sách riêng (Google Drive của chính bạn, chỉ bạn thấy) ----------
   // Dùng chung phiên đăng nhập Google của app Tree Ebook (cùng trang web). Trang web không tự đăng nhập:
   // hết phiên thì chuyển qua app để làm mới rồi app tự quay lại đây.
@@ -563,6 +598,7 @@
     else if (p === "tim") { html = listPage(`Kết quả cho “${a}”`, search(a || ""), "Tìm kiếm"); $("#searchInput").value = a || ""; }
     else if (p === "sach") { html = pageBook(a); after = () => bindBook(a); }
     else if (p === "doc") { html = pageRead(a, +c || 0); document.body.classList.add("reading"); after = () => bindRead(a, Math.max(0, +c || 0)); }
+    else if (p === "gioi-thieu") { html = pageIntro(); after = renderIntro; }
     else if (p === "rieng") { html = pagePriv(); after = () => { renderPriv(); if (gValid(gSession()) && (!priv.tree || Date.now() - (priv.tree.at || 0) > 60000)) refreshPriv(); }; }
     else if (p === "tu-sach") { html = pageShelf(); after = () => { const x = $("#clearHist"); x && (x.onclick = (e) => { e.preventDefault(); store.set("history", []); route(); }); }; }
     else html = notFound();
