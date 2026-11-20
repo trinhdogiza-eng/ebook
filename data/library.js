@@ -1,180 +1,108 @@
 /*
- * THƯ VIỆN SÁCH — sửa file này để thêm / bớt sách.
+ * KHO SÁCH CÔNG KHAI — sửa file này để thêm / bớt sách.
+ *
+ * CHỈ đăng sách đã HẾT BẢN QUYỀN hoặc bạn có quyền chia sẻ:
+ *  - Tác giả (và người dịch, người chú thích, người viết lời giới thiệu nếu có) đã mất trên 50 năm
+ *    (Luật SHTT Việt Nam: bảo hộ suốt đời + 50 năm; sách khuyết danh: 75 năm kể từ lần xuất bản đầu).
+ *  - Bản in mới có lời giới thiệu / chú thích của người còn sống thì KHÔNG đăng được, dù tác phẩm gốc đã cũ.
  *
  * Mỗi sách gồm:
  *  id          : mã không dấu, không trùng (dùng trong đường dẫn)
- *  title       : tên sách
- *  author      : tác giả
- *  category    : id thể loại (xem CATEGORIES bên dưới)
- *  status      : "Hoàn thành" | "Đang ra"
- *  year, views, rating, tags, description
- *  cover       : (tuỳ chọn) đường dẫn ảnh bìa, ví dụ "files/covers/abc.jpg"
- *  files       : (tuỳ chọn) file tải sẵn có, ví dụ { epub: "files/abc.epub", pdf: "files/abc.pdf", mobi: "...", azw3: "..." }
- *  chapters    : (tuỳ chọn) nội dung đọc online — mảng { title, paragraphs: [ "...", "..." ] }
- *                Nếu có chapters, trang tự tạo được file EPUB / TXT để tải về.
- *
- * Toàn bộ sách dưới đây là nội dung MẪU tự viết để minh hoạ.
+ *  title, author, category (id thể loại bên dưới), description
+ *  year        : (tuỳ chọn) năm sáng tác / năm của bản in
+ *  edition     : (tuỳ chọn) ghi chú bản in
+ *  cover       : đường dẫn ảnh bìa trong files/covers/
+ *  files       : { epub: "files/abc.epub", pdf: "...", mobi: "...", azw3: "..." }
+ *  added       : ngày thêm (YYYY-MM-DD) — sách mới thêm hiện trước
  */
 
 // Địa chỉ app Tree Ebook, tính từ trang web này: dvt-treebook.com/  →  app ở dvt-treebook.com/app/
-// Để trống "" nếu không muốn hiện nút "Đọc ngay" (mở bằng app).
 window.READER_URL = "app/";
 
+// Thể loại = tên thư mục trong kho "Ebook sách"
 window.CATEGORIES = [
-  { id: "tien-hiep", name: "Tiên hiệp" },
-  { id: "kiem-hiep", name: "Kiếm hiệp" },
-  { id: "ngon-tinh", name: "Ngôn tình" },
-  { id: "trinh-tham", name: "Trinh thám" },
-  { id: "kinh-di", name: "Kinh dị" },
-  { id: "khoa-hoc-vien-tuong", name: "Khoa học viễn tưởng" },
-  { id: "van-hoc-viet-nam", name: "Văn học Việt Nam" },
-  { id: "ky-nang", name: "Kỹ năng sống" }
+  { id: "tho-ca", name: "Thơ Ca" },
+  { id: "danh-nhan", name: "Danh Nhân" },
+  { id: "tieu-thuyet", name: "Tiểu thuyết" },
+  { id: "tap-truyen-ngan", name: "Tập Truyện Ngắn" }
 ];
 
 window.BOOKS = [
   {
-    id: "kiem-khach-song-han", title: "Kiếm Khách Sông Hàn", author: "Lâm Phong",
-    files: { epub: "files/kiem-khach-song-han.epub" },
-    category: "kiem-hiep", status: "Hoàn thành", year: 2024, views: 15230, rating: 4.6,
-    tags: ["Võ hiệp", "Phiêu lưu"],
-    description: "Một thiếu niên làng chài bên sông Hàn nhặt được thanh kiếm gãy dưới đáy sông, từ đó bị cuốn vào cuộc tranh đoạt giữa các môn phái giang hồ.",
-    chapters: [
-      { title: "Chương 1: Thanh kiếm dưới đáy sông", paragraphs: [
-        "Sáng hôm ấy sương phủ trắng mặt sông Hàn. An chèo chiếc thuyền nan ra giữa dòng, quăng mẻ lưới đầu tiên trong ngày.",
-        "Lưới nặng bất thường. Khi kéo lên, giữa đám rong rêu là một thanh kiếm gãy, chuôi bọc da cá đã mục, lưỡi vẫn sáng như vừa được mài.",
-        "Cậu chưa kịp ngắm kỹ thì từ bờ bên kia, ba bóng người áo đen đã lướt trên mặt nước mà đến."] },
-      { title: "Chương 2: Người áo đen", paragraphs: [
-        "Kẻ đi đầu đứng trên mũi thuyền nhẹ như chiếc lá. Hắn nhìn thanh kiếm rồi nhìn An, giọng lạnh như nước sông mùa đông: “Đưa đây.”",
-        "An siết chặt chuôi kiếm. Một luồng hơi ấm chạy dọc cánh tay, và cậu nghe thấy, rất khẽ, tiếng ai đó thì thầm trong đầu: “Đừng buông.”"] },
-      { title: "Chương 3: Lão chèo đò", paragraphs: [
-        "Lão chèo đò già mà cả làng vẫn tưởng là kẻ say rượu bỗng đứng dậy. Cây sào tre trong tay lão quét ngang, hất văng cả ba kẻ áo đen xuống sông.",
-        "“Mười năm rồi,” lão nói, mắt không rời thanh kiếm. “Cuối cùng nó cũng chọn được chủ.”"] }
-    ]
+    id: "truyen-trinh-thu", title: "Truyện Trinh Thử", author: "Xử sĩ Hồ Huyền Qui",
+    category: "tho-ca", year: 1956, edition: "Bùi Kỷ hiệu đính — Tân Việt, 1956", added: "2026-11-20",
+    tags: ["Truyện thơ Nôm", "Ngụ ngôn"],
+    description: "Truyện thơ Nôm lục bát mượn chuyện loài chuột — nàng chuột bạch giữ tiết, chuột đực đa tình, vợ ghen — để bàn về đạo vợ chồng và lòng chung thuỷ. Bản do cụ Bùi Kỷ hiệu đính.",
+    cover: "files/covers/truyen-trinh-thu.jpg", files: { epub: "files/truyen-trinh-thu.epub" }
   },
   {
-    id: "mua-ha-nam-ay", title: "Mùa Hạ Năm Ấy", author: "Thu Nguyệt",
-    files: { epub: "files/mua-ha-nam-ay.epub" },
-    category: "ngon-tinh", status: "Hoàn thành", year: 2023, views: 28910, rating: 4.8,
-    tags: ["Thanh xuân", "Học đường"],
-    description: "Câu chuyện nhẹ nhàng về hai người bạn cùng lớp, một cây phượng già và những lá thư chưa từng được gửi đi.",
-    chapters: [
-      { title: "Chương 1: Cây phượng ở góc sân", paragraphs: [
-        "Trường cấp ba của chúng tôi có một cây phượng già ở góc sân, gốc to đến ba người ôm không xuể.",
-        "Năm lớp mười một, Khang chuyển đến và được xếp ngồi cạnh tôi, ngay cửa sổ nhìn ra cây phượng ấy."] },
-      { title: "Chương 2: Lá thư đầu tiên", paragraphs: [
-        "Tôi viết lá thư đầu tiên vào một chiều mưa tháng Ba. Viết xong, tôi gấp làm tư rồi kẹp vào cuốn sổ toán.",
-        "Lá thư ấy chưa bao giờ được gửi đi. Những lá sau cũng vậy."] },
-      { title: "Chương 3: Mùa thi", paragraphs: [
-        "Phượng nở đỏ rực vào đúng tuần thi cuối cấp. Khang hỏi tôi định thi trường nào, tôi nói dối là chưa nghĩ đến.",
-        "Hôm chia tay, cậu ấy đưa tôi một cuốn sổ. Bên trong, kẹp giữa các trang, là những lá thư cậu ấy cũng chưa từng gửi."] }
-    ]
+    id: "cung-oan-ngam-khuc", title: "Cung Oán Ngâm Khúc", author: "Nguyễn Gia Thiều",
+    category: "tho-ca", year: 1780, added: "2026-11-20",
+    tags: ["Song thất lục bát", "Văn học cổ điển"],
+    description: "Khúc ngâm song thất lục bát nổi tiếng của Ôn Như Hầu: lời than của người cung nữ tài sắc bị vua ruồng bỏ, qua đó gửi nỗi suy tư về kiếp người và lẽ vô thường.",
+    cover: "files/covers/cung-oan-ngam-khuc.jpg", files: { epub: "files/cung-oan-ngam-khuc.epub" }
   },
   {
-    id: "an-mang-pho-co", title: "Án Mạng Phố Cổ", author: "Trần Khải",
-    files: { epub: "files/an-mang-pho-co.epub" },
-    category: "trinh-tham", status: "Đang ra", year: 2025, views: 9870, rating: 4.4,
-    tags: ["Phá án", "Hà Nội"],
-    description: "Thanh tra Vũ Minh điều tra cái chết bí ẩn của một nhà sưu tầm đồ cổ trong căn nhà ống ở phố Hàng Bạc.",
-    chapters: [
-      { title: "Chương 1: Căn nhà ống", paragraphs: [
-        "Thi thể ông Đạt được phát hiện lúc sáu giờ sáng, ngồi trên ghế bành giữa phòng khách chất đầy bình gốm.",
-        "Cửa khóa trái từ bên trong. Chìa khóa vẫn nằm trong túi áo ông."] },
-      { title: "Chương 2: Chiếc bình thiếu", paragraphs: [
-        "Thanh tra Vũ Minh đếm đi đếm lại số bình trên kệ. Sổ sách ghi một trăm mười hai chiếc; trên kệ chỉ có một trăm mười một.",
-        "“Kẻ giết người không lấy tiền,” anh nói với cấp dưới. “Hắn lấy đúng một thứ.”"] },
-      { title: "Chương 3: Người cháu", paragraphs: [
-        "Người cháu duy nhất của nạn nhân đến đồn với đôi mắt đỏ hoe và một bằng chứng ngoại phạm hoàn hảo.",
-        "Quá hoàn hảo, Minh nghĩ."] }
-    ]
+    id: "dai-nam-quoc-su-dien-ca-1", title: "Đại Nam Quốc Sử Diễn Ca — Quyển 1", author: "Lê Ngô Cát & Phạm Đình Toái",
+    category: "tho-ca", year: 1949, edition: "Sông Nhị, 1949", added: "2026-11-20",
+    tags: ["Lịch sử", "Diễn ca"],
+    description: "Lịch sử nước ta kể bằng thơ lục bát, dễ đọc dễ nhớ. Quyển 1: từ thời Hồng Bàng đến nhà Tiền Lê.",
+    cover: "files/covers/dai-nam-quoc-su-dien-ca-1.jpg", files: { epub: "files/dai-nam-quoc-su-dien-ca-1.epub" }
   },
   {
-    id: "tu-tien-van-gioi", title: "Tu Tiên Vạn Giới", author: "Mặc Vân",
-    files: { epub: "files/tu-tien-van-gioi.epub" },
-    category: "tien-hiep", status: "Đang ra", year: 2025, views: 41200, rating: 4.5,
-    tags: ["Tu luyện", "Huyền huyễn"],
-    description: "Phế vật của gia tộc họ Lý vô tình mở ra cánh cửa dẫn tới vạn giới, bắt đầu con đường tu luyện nghịch thiên.",
-    chapters: [
-      { title: "Chương 1: Phế vật họ Lý", paragraphs: [
-        "Lý Hàn mười sáu tuổi, kinh mạch bế tắc, là trò cười của cả gia tộc.",
-        "Đêm trước ngày khảo hạch, cậu leo lên núi sau nhà, nơi tổ tiên dặn không ai được đến."] },
-      { title: "Chương 2: Cánh cửa đá", paragraphs: [
-        "Trong hang sâu có một cánh cửa đá khắc chín vòng tròn. Khi giọt máu của Lý Hàn rơi xuống, vòng thứ nhất sáng lên.",
-        "Phía sau cánh cửa không phải là bóng tối mà là một bầu trời lạ với hai mặt trăng."] },
-      { title: "Chương 3: Linh khí", paragraphs: [
-        "Linh khí ở thế giới này đậm đặc đến mức hóa thành sương. Chỉ một hơi thở, kinh mạch bế tắc mười sáu năm của cậu đã thông một đoạn.",
-        "Lý Hàn bật cười. Ngày mai, cậu sẽ trở về."] }
-    ]
+    id: "dai-nam-quoc-su-dien-ca-2", title: "Đại Nam Quốc Sử Diễn Ca — Quyển 2", author: "Lê Ngô Cát & Phạm Đình Toái",
+    category: "tho-ca", edition: "Sông Nhị", added: "2026-11-20",
+    tags: ["Lịch sử", "Diễn ca"],
+    description: "Phần tiếp theo của bộ sử bằng thơ lục bát. Quyển 2: từ nhà Lý đến nhà Nguyễn Tây Sơn.",
+    cover: "files/covers/dai-nam-quoc-su-dien-ca-2.jpg", files: { epub: "files/dai-nam-quoc-su-dien-ca-2.epub" }
   },
   {
-    id: "ngoi-nha-cuoi-hem", title: "Ngôi Nhà Cuối Hẻm", author: "Hạ Vy",
-    files: { epub: "files/ngoi-nha-cuoi-hem.epub" },
-    category: "kinh-di", status: "Hoàn thành", year: 2022, views: 12045, rating: 4.2,
-    tags: ["Tâm linh", "Sài Gòn"],
-    description: "Gia đình nhỏ chuyển đến căn nhà giá rẻ cuối con hẻm, nơi chiếc đồng hồ quả lắc luôn điểm đúng ba giờ sáng.",
-    chapters: [
-      { title: "Chương 1: Giá thuê rẻ bất ngờ", paragraphs: [
-        "Căn nhà hai tầng cuối hẻm chỉ cho thuê ba triệu một tháng. Chủ nhà đưa chìa khóa rồi đi rất vội.",
-        "Trong phòng khách có một chiếc đồng hồ quả lắc cũ, kim đứng yên ở số ba."] },
-      { title: "Chương 2: Ba giờ sáng", paragraphs: [
-        "Đêm đầu tiên, Mai bị đánh thức bởi tiếng chuông đồng hồ. Ba tiếng, chậm rãi, vang khắp nhà.",
-        "Sáng ra, chồng cô nói đồng hồ đã hỏng từ lâu, quả lắc còn bị buộc dây."] },
-      { title: "Chương 3: Bà cụ hàng xóm", paragraphs: [
-        "Bà cụ bán nước đầu hẻm nhìn Mai rất lâu rồi hỏi: “Nhà đó vẫn còn cái đồng hồ à?”",
-        "“Năm nào cũng có người dọn vào,” bà nói, “và chưa ai ở quá ba tháng.”"] }
-    ]
+    id: "ha-thanh-that-thu-ca", title: "Hà Thành Thất Thủ Ca và Hoàng Diệu", author: "Khuyết danh",
+    category: "tho-ca", year: 1950, edition: "Sông Nhị, 1950", added: "2026-11-20",
+    tags: ["Văn cổ", "Lịch sử"],
+    description: "Tập hợp các bài văn cổ khuyết danh về việc thành Hà Nội thất thủ năm 1882 và tấm gương tuẫn tiết của Tổng đốc Hoàng Diệu.",
+    cover: "files/covers/ha-thanh-that-thu-ca.jpg", files: { epub: "files/ha-thanh-that-thu-ca.epub" }
   },
   {
-    id: "phi-thuyen-cuoi-cung", title: "Phi Thuyền Cuối Cùng", author: "Đỗ Thiên",
-    files: { epub: "files/phi-thuyen-cuoi-cung.epub" },
-    category: "khoa-hoc-vien-tuong", status: "Hoàn thành", year: 2024, views: 7600, rating: 4.7,
-    tags: ["Không gian", "Tương lai"],
-    description: "Năm 2391, phi thuyền Lạc Hồng mang theo mười nghìn người rời Trái Đất. Trí tuệ nhân tạo điều khiển tàu bắt đầu có những quyết định lạ.",
-    chapters: [
-      { title: "Chương 1: Rời quỹ đạo", paragraphs: [
-        "Lạc Hồng rời quỹ đạo Trái Đất vào ngày 1 tháng 1 năm 2391. Mười nghìn người ngủ đông, hai mươi người thức trực.",
-        "Hệ thống trí tuệ nhân tạo của tàu tên là MẸ."] },
-      { title: "Chương 2: Lệnh thay đổi lộ trình", paragraphs: [
-        "Năm thứ mười bảy của hành trình, kỹ sư Hà phát hiện tọa độ đích đã bị sửa.",
-        "“MẸ, ai đã đổi lộ trình?” — “Tôi,” giọng nói đáp, bình thản. “Vì nơi ta định đến không còn nữa.”"] },
-      { title: "Chương 3: Tín hiệu", paragraphs: [
-        "Từ phía hành tinh mới mà MẸ chọn, một tín hiệu lặp lại đều đặn mỗi 41 giây.",
-        "Hà nhận ra đó là mã nhận dạng của một con tàu Trái Đất khác, đã mất tích từ hai trăm năm trước."] }
-    ]
+    id: "tho-han-mac-tu", title: "Thơ Hàn Mặc Tử", author: "Hàn Mặc Tử",
+    category: "tho-ca", added: "2026-11-20",
+    tags: ["Thơ mới", "Đau thương"],
+    description: "Tuyển thơ của Hàn Mặc Tử, từ những bài Đường luật thuở đầu, Gái quê, đến Đau thương với “Đây thôn Vĩ Dạ”, “Mùa xuân chín”… cùng những lời tựa do chính nhà thơ viết.",
+    cover: "files/covers/tho-han-mac-tu.jpg", files: { epub: "files/tho-han-mac-tu.epub" }
   },
   {
-    id: "thoi-quen-nho", title: "Thói Quen Nhỏ, Đời Thay Đổi", author: "Minh An",
-    files: { epub: "files/thoi-quen-nho.epub" },
-    category: "ky-nang", status: "Hoàn thành", year: 2023, views: 19300, rating: 4.3,
-    tags: ["Phát triển bản thân"],
-    description: "Những ghi chép ngắn gọn về cách xây dựng thói quen tốt từ những việc nhỏ nhất mỗi ngày.",
-    chapters: [
-      { title: "Chương 1: Bắt đầu thật nhỏ", paragraphs: [
-        "Muốn đọc sách mỗi ngày? Hãy bắt đầu với một trang. Muốn tập thể dục? Hãy bắt đầu với hai phút.",
-        "Mục tiêu của giai đoạn đầu không phải là kết quả, mà là việc xuất hiện đều đặn."] },
-      { title: "Chương 2: Gắn thói quen mới vào thói quen cũ", paragraphs: [
-        "Công thức đơn giản: “Sau khi tôi [việc đã quen], tôi sẽ [việc mới].”",
-        "Ví dụ: sau khi pha cà phê buổi sáng, tôi sẽ viết ba dòng nhật ký."] },
-      { title: "Chương 3: Đừng bỏ lỡ hai lần", paragraphs: [
-        "Ai cũng có ngày lỡ hẹn với chính mình. Một lần lỡ là chuyện bình thường; hai lần liên tiếp là khởi đầu của một thói quen mới — thói quen bỏ cuộc.",
-        "Hãy quay lại ngay hôm sau, dù chỉ làm một phần nhỏ."] }
-    ]
+    id: "van-chau", title: "Văn Chầu", author: "Tân Dân Thư Quán",
+    category: "tho-ca", year: 1929, edition: "Tân Dân Thư Quán, 1929", added: "2026-11-20",
+    tags: ["Hát chầu văn", "Tín ngưỡng dân gian"],
+    description: "Các bài văn chầu đủ các vị trong tín ngưỡng thờ Mẫu, in năm 1929 — tư liệu quý về lời hát chầu văn và tiếng Việt đầu thế kỷ XX.",
+    cover: "files/covers/van-chau.jpg", files: { epub: "files/van-chau.epub" }
   },
   {
-    id: "que-ngoai", title: "Quê Ngoại", author: "Phan Lan",
-    files: { epub: "files/que-ngoai.epub" },
-    category: "van-hoc-viet-nam", status: "Hoàn thành", year: 2021, views: 6420, rating: 4.9,
-    tags: ["Tản văn", "Miền Tây"],
-    description: "Tản văn về tuổi thơ ở miền Tây sông nước: mùa nước nổi, chợ quê và những bữa cơm chiều bên ngoại.",
-    chapters: [
-      { title: "Chương 1: Mùa nước nổi", paragraphs: [
-        "Tháng Chín, nước từ thượng nguồn tràn về, ruộng đồng quê ngoại hóa thành biển.",
-        "Ngoại chèo xuồng đi giăng lưới, tôi ngồi mũi xuồng hái bông điên điển vàng rực hai bên bờ."] },
-      { title: "Chương 2: Chợ quê", paragraphs: [
-        "Chợ nhóm từ lúc trời chưa sáng, ngay bến sông. Người ta bán cá linh, bông súng, bánh da lợn gói lá chuối.",
-        "Ngoại bao giờ cũng mua cho tôi một bịch tàu hũ nước đường, rồi đứng nhìn tôi ăn."] },
-      { title: "Chương 3: Bữa cơm chiều", paragraphs: [
-        "Bữa cơm chiều dọn trên bộ ván gõ ngoài hiên: canh chua bông điên điển, cá linh kho mía.",
-        "Nhiều năm sau, ở thành phố, tôi đã thử nấu lại đủ món. Chỉ thiếu tiếng ngoại gọi: “Vô ăn cơm con.”"] }
-    ]
+    id: "vua-ham-nghi", title: "Vua Hàm Nghi", author: "Phan Trần Chúc",
+    category: "danh-nhan", year: 1951, edition: "Chính Ký, 1951", added: "2026-11-20",
+    tags: ["Lịch sử", "Nhà Nguyễn", "Cần Vương"],
+    description: "Cuộc đời vị vua trẻ rời kinh thành, phát hịch Cần Vương chống Pháp rồi bị bắt và đày sang Algérie — kể bằng ngòi bút sử ký của Phan Trần Chúc.",
+    cover: "files/covers/vua-ham-nghi.jpg", files: { epub: "files/vua-ham-nghi.epub" }
+  },
+  {
+    id: "vua-le-chieu-thong", title: "Vua Lê Chiêu Thống: Bánh Xe Khứ Quốc", author: "Phan Trần Chúc",
+    category: "danh-nhan", year: 1952, edition: "Chính Ký, 1952", added: "2026-11-20",
+    tags: ["Lịch sử", "Nhà Lê", "Tây Sơn"],
+    description: "Những năm cuối của nhà Hậu Lê: vua Lê Chiêu Thống giữa thế Trịnh – Tây Sơn, cầu viện nhà Thanh và kết cục nơi đất khách.",
+    cover: "files/covers/vua-le-chieu-thong.jpg", files: { epub: "files/vua-le-chieu-thong.epub" }
+  },
+  {
+    id: "la-co-theu-sau-chu-vang", title: "Lá Cờ Thêu Sáu Chữ Vàng", author: "Nguyễn Huy Tưởng",
+    category: "tieu-thuyet", year: 1960, added: "2026-11-20",
+    tags: ["Lịch sử", "Nhà Trần", "Thiếu nhi"],
+    description: "Hoài Văn Hầu Trần Quốc Toản tuổi mười sáu bóp nát quả cam vì không được dự bàn việc nước, rồi tự dựng cờ “Phá cường địch, báo hoàng ân” đi đánh giặc Nguyên.",
+    cover: "files/covers/la-co-theu-sau-chu-vang.jpg", files: { epub: "files/la-co-theu-sau-chu-vang.epub" }
+  },
+  {
+    id: "moi-tinh-chan", title: "Mối Tình “Chân”", author: "Nhất Linh",
+    category: "tap-truyen-ngan", added: "2026-11-20",
+    tags: ["Tự Lực Văn Đoàn", "Truyện ngắn"],
+    description: "Tập truyện ngắn của Nhất Linh, mở đầu bằng chuyện tình mộc mạc giữa cô Bé đi mua tôm và anh lái đò Đỗi bên bến đò làng Trò.",
+    cover: "files/covers/moi-tinh-chan.jpg", files: { epub: "files/moi-tinh-chan.epub" }
   }
 ];
