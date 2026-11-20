@@ -78,7 +78,7 @@
       <section class="hero">
         <div>
           <h1>Đọc sách, nghe đọc to, đồng bộ mọi thiết bị</h1>
-          <p>Bấm <b>Đọc ngay</b> để mở sách trong app Tree Ebook: nghe đọc to, và đọc tiếp đúng câu đang dở trên điện thoại, iPad hay máy tính. Hoặc tải về EPUB, TXT để đọc ở nơi khác.</p>
+          <p>Bấm <b>Đọc ngay</b> để mở sách trong app Tree Ebook: nghe đọc to, và đọc tiếp đúng câu đang dở trên điện thoại, iPad hay máy tính. Hoặc tải file EPUB về để đọc ở nơi khác.</p>
           <p style="margin-top:-6px"><a class="btn primary" href="app/">📖 Mở app Tree Ebook</a></p>
           <div class="hero-stats">
             <div><b>${BOOKS.length}</b><span>đầu sách</span></div>
