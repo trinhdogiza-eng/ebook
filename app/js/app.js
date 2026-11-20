@@ -1599,7 +1599,7 @@ applyChrome();
 renderLibrary();
 updateAccountUI();
 if (openLink) openFromLink(openLink);
-else if (settings.startView === 'resume' && !driveLink) lastBook.resume().catch(() => {});
+else if (settings.startView === 'resume' && !driveLink && !backLink) lastBook.resume().catch(() => {});
 // App nằm trong trang web Tree Ebook (…/app/) → hiện nút quay về kho sách
 if (/\/app\/(index\.html)?$/.test(location.pathname)) $('btnSite').hidden = false;
 sync.init(onUser).then(() => {
