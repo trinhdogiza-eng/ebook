@@ -63,11 +63,37 @@ export function splitSentences(text, max = 220) {
 // Web Audio → MediaStream → 1 thẻ <audio> phát liên tục từ lúc bấm 🔊 và không bao giờ đổi nguồn.
 // Các câu (giọng AI / Google) được giải mã rồi "đổ" vào luồng này. Kiểu đổi tệp âm thanh liên tục thì
 // Android chặn khi khoá màn hình, nên không dùng nữa.
+// Âm thanh "mỏ neo" cho Android: 1 tệp gần như im lặng (nhiễu cực nhỏ, không nghe thấy) phát lặp lại bằng thẻ
+// <audio> thường. Chrome Android chỉ coi trang là "đang phát nhạc" (hiện điều khiển trên màn hình khoá và giữ app
+// chạy ngầm lâu dài) với thẻ <audio> có tệp thật; luồng trực tiếp (MediaStream) thì không → sau vài phút khoá
+// màn hình, trang bị Android cho "ngủ" và ngừng đọc. Không dùng trên iPhone (iPhone đã chạy tốt).
+const IS_ANDROID = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+function silentWavUrl(seconds = 8, rate = 8000) {
+  const n = seconds * rate;
+  const buf = new ArrayBuffer(44 + n * 2);
+  const v = new DataView(buf);
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, 'data'); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, ((i * 7919) % 5) - 2, true); // ±2/32768: không nghe thấy
+  return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+}
+
 export const stream = {
-  ctx: null, dest: null, out: null, nodes: new Set(),
+  ctx: null, dest: null, out: null, anchor: null, nodes: new Set(), wanted: false,
   // Phải gọi trong lúc người dùng bấm nút (lần đầu)
   ensure() {
+    this.wanted = true;
     try {
+      if (IS_ANDROID && !this.anchor) {
+        this.anchor = new Audio(silentWavUrl());
+        this.anchor.loop = true;
+        // Hệ thống tự dừng (vd. cuộc gọi đến xong) trong lúc đang đọc → phát lại
+        this.anchor.addEventListener('pause', () => { if (this.wanted) setTimeout(() => this.wanted && this.anchor.play().catch(() => {}), 300); });
+      }
+      this.anchor?.play().catch(() => {});
       if (!this.ctx) {
         const C = window.AudioContext || window.webkitAudioContext;
         // "playback": bộ đệm âm thanh lớn hơn → máy bận (đang tạo giọng AI, khoá màn hình chạy nhân yếu)
@@ -78,17 +104,23 @@ export const stream = {
           this.out = new Audio();
           this.out.setAttribute('playsinline', '');
           this.out.srcObject = this.dest.stream;
+          this.out.addEventListener('pause', () => { if (this.wanted) setTimeout(() => this.wanted && this.out.play().catch(() => {}), 300); });
         } else {
           this.dest = this.ctx.destination;
         }
+        // Android tạm ngắt âm thanh (thông báo, cuộc gọi…) → tự chạy lại khi vẫn đang đọc
+        this.ctx.onstatechange = () => {
+          if (this.wanted && this.ctx.state !== 'running' && this.ctx.state !== 'closed') setTimeout(() => this.wanted && this.ctx.resume().catch(() => {}), 300);
+        };
       }
       this.ctx.resume?.().catch?.(() => {});
       this.out?.play().catch(() => {});
     } catch (e) { console.warn('Không tạo được luồng âm thanh', e); }
   },
-  suspend() { try { this.ctx?.suspend(); this.out?.pause(); } catch { /* bỏ qua */ } },
+  suspend() { this.wanted = false; try { this.ctx?.suspend(); this.out?.pause(); this.anchor?.pause(); } catch { /* bỏ qua */ } },
   resume() { this.ensure(); },
-  decode(arrayBuffer) { this.ensure(); return this.ctx.decodeAudioData(arrayBuffer); },
+  // Không "đánh thức" luồng ở đây: câu tạo xong lúc đang tạm dừng không được làm âm thanh chạy lại
+  decode(arrayBuffer) { if (!this.ctx) this.ensure(); return this.ctx.decodeAudioData(arrayBuffer); },
   // Phát buffer đúng thời điểm `at` (theo đồng hồ âm thanh) → các câu nối tiếp liền mạch, không phụ thuộc
   // vào việc trang (bị chậm khi khoá màn hình) xử lý sự kiện "hết câu" nhanh hay chậm.
   playAt(buffer, at, onEnded) {
@@ -404,6 +436,12 @@ export class CloudSpeaker extends Speaker {
     }
     this.fill();
     this.checkDone();
+  }
+  // Đánh thức lại (khi quay lại app / trang vừa bị hệ thống cho "ngủ" rồi chạy tiếp): mở lại luồng, chuẩn bị & xếp câu tiếp
+  kick() {
+    if (this.state !== 'playing') return;
+    stream.ensure();
+    this.pump();
   }
   checkDone() {
     if (this.state === 'playing' && this.done && !this.ahead.length && !this.sched.length && !this.filling) this.finish();
