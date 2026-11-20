@@ -9,7 +9,7 @@ import {
 } from './read-aloud.js';
 
 /* global ePub */
-const APP_VERSION = '2.11';
+const APP_VERSION = '2.12';
 const $ = (id) => document.getElementById(id);
 $('appVersion').textContent = `Tree Ebook · Phiên bản ${APP_VERSION} · Tác giả: Trình Đỗ`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -375,6 +375,10 @@ async function openBook(id) {
 
   R.unwatch = sync.watchOne(id, onRemoteChange);
   if (R.kind === 'epub') loadLocations(id);
+  // Nạp sẵn giọng AI lúc vừa mở sách (khi máy sẽ dùng nó) → lúc bấm 🔊 / khoá màn hình không phải nạp trùng lúc phát
+  if (bgAiOn() && aiStored[settings.bgVoice] && (aiAlways() || /Android/i.test(navigator.userAgent))) {
+    setTimeout(() => { if (R.id === id) aiWarmup(settings.bgVoice).catch(() => {}); }, 1500);
+  }
 }
 
 /* ----- PDF ----- */
@@ -1052,6 +1056,8 @@ function handoff(from, to) {
   if (paused) to.pause();
 }
 const aiAlways = () => settings.openVoice === 'ai' && bgAiOn();
+// Máy này không phát thẳng được khi khoá màn hình → luồng âm thanh vừa đổi cách phát: đọc lại từ câu đang dở
+stream.onRouteChange = () => { if (speaker && speaker !== deviceSpeaker && speaker.state === 'playing') handoff(speaker, speaker); };
 document.addEventListener('visibilitychange', () => {
   if (aiAlways()) return; // dùng giọng AI suốt → không đổi giọng
   if (document.hidden) {
